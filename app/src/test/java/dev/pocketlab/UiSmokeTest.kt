@@ -173,7 +173,7 @@ class UiSmokeTest {
         compose.onNodeWithText("Token name").performTextReplacement("tab let;rm -rf")
         compose.waitForIdle()
         compose.onNodeWithText("API token ID: pocketlab@pve!tabletrm-rf", substring = true).assertExists()
-        compose.onNodeWithText("First time?", substring = true).performClick()
+        compose.onNodeWithText("First time?", substring = true).performScrollTo().performClick()
         compose.waitForIdle()
         snap("16b-edit-cluster-setup-open")
         compose.onNodeWithText("Copy commands", substring = true).performScrollTo().performClick()
@@ -181,16 +181,26 @@ class UiSmokeTest {
         val ctx = org.robolectric.RuntimeEnvironment.getApplication()
         val clip = (ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClip
         val copied = clip?.getItemAt(0)?.text?.toString()
-        org.junit.Assert.assertEquals(dev.pocketlab.ui.screens.pveTokenSetup("tabletrm-rf"), copied)
+        org.junit.Assert.assertEquals(dev.pocketlab.ui.screens.pveTokenSetup("pocketlab@pve", "tabletrm-rf"), copied)
         assertTrue(copied!!.endsWith("pveum user token add pocketlab@pve tabletrm-rf --privsep 0"))
     }
 
     @Test fun customTokenId() {
         shoot("17a-edit-cluster", open = Routes.editCluster("c1"))
         compose.onNodeWithText("Use a different user or token").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("API token ID").performTextReplacement("root@pam!tab let;")
+        compose.onNodeWithText("First time?", substring = true).performScrollTo().performClick()
         snap("17-edit-cluster-custom")
-        compose.onNodeWithText("API token ID").assertExists()
-        compose.onNodeWithText("First time?", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("Copy commands", substring = true).performScrollTo().performClick()
+        compose.waitForIdle()
+        val clip = (org.robolectric.RuntimeEnvironment.getApplication().getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager).primaryClip?.getItemAt(0)?.text?.toString()!!
+        // Username in every line, token name in the last; no "user add" for a @pam user.
+        org.junit.Assert.assertEquals(dev.pocketlab.ui.screens.pveTokenSetup("root@pam", "tablet"), clip)
+        assertTrue(clip.endsWith("pveum user token add root@pam tablet --privsep 0"))
+        assertTrue(clip.contains("--users root@pam --roles PVEAuditor"))
+        assertTrue(!clip.contains("user add"))
     }
 
     @Test fun node() = shoot("12-node", open = Routes.node("c1", "pve2"))

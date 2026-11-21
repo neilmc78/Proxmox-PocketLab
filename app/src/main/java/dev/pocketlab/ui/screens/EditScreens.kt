@@ -102,15 +102,31 @@ const val PVE_USER = "pocketlab@pve"
 
 /** Proxmox's rule for token names. Also keeps the copied shell commands free of anything but these characters. */
 val PVE_TOKEN_NAME = Regex("[A-Za-z][A-Za-z0-9._-]+")
+private val PVE_USERID = Regex("[A-Za-z0-9._-]+@[A-Za-z0-9._-]+")
 
 fun cleanTokenName(s: String) = s.filter { (it in 'a'..'z') || (it in 'A'..'Z') || (it in '0'..'9') || it in "._-" }.take(40)
+/** Same characters plus the '@' and '!' of a full token ID. */
+fun cleanTokenId(s: String) = s.filter { (it in 'a'..'z') || (it in 'A'..'Z') || (it in '0'..'9') || it in "._-@!" }.take(100)
 
-/** Commands to run on a Proxmox node to create a least-privilege user and an API token called [tokenName]. */
-fun pveTokenSetup(tokenName: String) = """pveum user add $PVE_USER
-pveum acl modify / --users $PVE_USER --roles PVEAuditor
-pveum role add PocketlabPower --privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback"
-pveum acl modify /vms --users $PVE_USER --roles PocketlabPower
-pveum user token add $PVE_USER ${cleanTokenName(tokenName)} --privsep 0"""
+/** "user@realm!token" -> (user@realm, token), or null if it isn't a valid Proxmox token ID. */
+fun splitTokenId(id: String): Pair<String, String>? {
+    val parts = id.trim().split('!')
+    if (parts.size != 2 || !PVE_USERID.matches(parts[0]) || !PVE_TOKEN_NAME.matches(parts[1])) return null
+    return parts[0] to parts[1]
+}
+
+/**
+ * Commands to run on a Proxmox node to set up [user] with a least-privilege role and an API token
+ * called [tokenName]. Only @pve users are created here; others (e.g. @pam) must already exist.
+ * Callers pass validated values, so only [PVE_USERID]/[PVE_TOKEN_NAME] characters reach the shell.
+ */
+fun pveTokenSetup(user: String, tokenName: String) = buildList {
+    if (user.endsWith("@pve")) add("pveum user add $user")
+    add("pveum acl modify / --users $user --roles PVEAuditor")
+    add("pveum role add PocketlabPower --privs \"VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback\"")
+    add("pveum acl modify /vms --users $user --roles PocketlabPower")
+    add("pveum user token add $user $tokenName --privsep 0")
+}.joinToString("\n")
 
 /** Selectable monospace block with a copy button (the screen is FLAG_SECURE, so it can't be screenshotted). */
 @Composable
@@ -148,7 +164,7 @@ fun EditClusterScreen(id: String?) {
     var customId by remember { mutableStateOf(existing?.tokenId ?: "") }
     var showSetup by remember { mutableStateOf(false) }
     fun tokenId() = if (custom) customId.trim() else "$PVE_USER!$tokenName"
-    fun tokenIdValid() = if (custom) Regex("^[^!\\s]+@[^!\\s]+![^!\\s]+$").matches(customId.trim()) else PVE_TOKEN_NAME.matches(tokenName)
+    fun tokenIdValid() = splitTokenId(tokenId()) != null
     var secret by remember { mutableStateOf(existing?.tokenSecret ?: "") }
     var pin by remember { mutableStateOf(existing?.pinnedCertSha256) }
     var busy by remember { mutableStateOf(false) }
@@ -196,25 +212,30 @@ fun EditClusterScreen(id: String?) {
                 isError = tokenName.isNotEmpty() && !tokenIdValid(), keyboardOptions = RawTextKeyboard,
                 supportingText = { Text("API token ID: ${tokenId()} · one token per device") })
         } else {
-            OutlinedTextField(customId, { customId = it }, Modifier.fillMaxWidth(), label = { Text("API token ID") }, singleLine = true,
-                placeholder = { Text("user@realm!tokenname") }, keyboardOptions = RawTextKeyboard,
-                isError = customId.isNotBlank() && !tokenIdValid())
+            OutlinedTextField(customId, { customId = cleanTokenId(it) }, Modifier.fillMaxWidth(), label = { Text("API token ID") }, singleLine = true,
+                placeholder = { Text("root@pam!tablet") }, keyboardOptions = RawTextKeyboard,
+                isError = customId.isNotBlank() && !tokenIdValid(),
+                supportingText = { Text("Username with its realm (@pve, @pam…), then !, then the token/device name") })
         }
         SecretField(secret, { secret = it }, "API token secret", placeholder = "xxxxxxxx-xxxx-…")
-        if (!custom) {
-            TextButton(onClick = { showSetup = !showSetup }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-                Text(if (showSetup) "▾ Create the token on Proxmox" else "▸ First time? Create the token on Proxmox")
-            }
-            if (showSetup) {
-                Help("Proxmox web UI → your node → Shell. Paste and run; the last line prints the secret (shown once). Skip lines 3–4 for read-only.")
-                CopyableCode(pveTokenSetup(tokenName), "Proxmox token setup")
-                Help("Revoke any time: Datacenter → Permissions → API Tokens → Remove.")
-            }
-        }
         TextButton(onClick = {
-            if (custom) { custom = false } else { customId = tokenId(); custom = true; showSetup = false }
+            if (custom) { splitTokenId(customId)?.takeIf { it.first == PVE_USER }?.let { tokenName = it.second }; custom = false }
+            else { customId = tokenId(); custom = true }
         }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
             Text(if (custom) "Use the $PVE_USER user instead" else "Use a different user or token")
+        }
+        TextButton(onClick = { showSetup = !showSetup }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+            Text(if (showSetup) "▾ Create the token on Proxmox" else "▸ First time? Create the token on Proxmox")
+        }
+        if (showSetup) {
+            val parts = splitTokenId(tokenId())
+            if (parts == null) Help(if (custom) "Enter a valid API token ID above to get the commands." else "Enter a token name above to get the commands.")
+            else {
+                Help("Proxmox web UI → your node → Shell. Paste and run; the last line prints the secret (shown once). For read-only, skip the two PocketlabPower lines. Already set up on another device? Only the last line is needed.")
+                CopyableCode(pveTokenSetup(parts.first, parts.second), "Proxmox token setup")
+                Help("Revoke any time: Datacenter → Permissions → API Tokens → Remove.")
+                Text("Then paste the secret into API token secret above and tap Test and save.", style = MaterialTheme.typography.bodySmall)
+            }
         }
         if (pin != null) Help("Pinned certificate: $pin")
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
