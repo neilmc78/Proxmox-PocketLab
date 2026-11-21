@@ -1,0 +1,72 @@
+# Pocketlab
+
+A phone app for your homelab: Proxmox VMs and containers, Docker containers, and SSH terminals.
+Everything runs on the phone and talks straight to your servers. There is no cloud service, no account and no analytics.
+
+## What it does
+
+- **Overview**: hosts reporting, running workloads, and a "needs attention" list (offline nodes, unhealthy or crashed containers, nodes with memory above 92%).
+- **Proxmox** (REST API with an API token): lists nodes, VMs and LXCs with CPU and memory and a one-hour sparkline. It can start, shut down, reboot, stop, reset, pause and resume guests, take snapshots and roll back to them. Guest config is read-only.
+- **Docker** (over SSH, with no exposed Docker socket): lists containers with health and Compose project. It can start, stop, restart and pause them, open a shell in a container with `docker exec`, and live-tail logs with search, match navigation, "only matches", and follow/pause.
+- **Terminal**: a full xterm-256color emulator (ConnectBot's termlib, backed by libvterm) with an extra key row (Esc, Tab, sticky Ctrl/Alt, arrows, F-keys, Home/End/PgUp/PgDn) and pinch to zoom. Sessions stay open while you move around the app.
+- **Consoles**: a node shell, `qm terminal <vmid>` for a VM's serial console, and `pct enter <vmid>` for an LXC, all over SSH to the node.
+- **Themes**: System, light or dark mode; 8 palettes; 6 accent colours.
+
+## Security model
+
+- API tokens, passwords and private keys are kept in one file encrypted with AES-256-GCM. The key is a non-exportable Android Keystore key (hardware-backed where the phone supports it). Backups and device transfer are disabled.
+- **Proxmox TLS**: a publicly trusted cert is accepted as normal. A self-signed cert (the Proxmox default) is shown to you with its SHA-256 fingerprint. Once you trust it, only that exact cert is accepted and any change is refused until you approve it again.
+- **SSH host keys**: trust on first use, with the same `SHA256:` fingerprint `ssh-keygen -lf` prints. If the key changes, the connection is refused and you get a man-in-the-middle warning.
+- Cleartext HTTP is disabled app-wide. The app's only permission is `INTERNET`.
+
+## Setup
+
+### Proxmox API token (least privilege)
+
+On any node:
+
+```sh
+pveum user add pocketlab@pve
+pveum acl modify / -user pocketlab@pve -role PVEAuditor
+pveum role add PocketlabPower -privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback VM.Console"
+pveum acl modify /vms -user pocketlab@pve -role PocketlabPower
+pveum user token add pocketlab@pve phone --privsep 0
+```
+
+Use `pocketlab@pve!phone` as the token ID and the printed secret. Skip the `PocketlabPower` lines for a read-only token.
+
+### SSH
+
+In **Settings → SSH keys → Generate Ed25519**, copy the public key into `~/.ssh/authorized_keys` on each host, then add the host.
+
+- Name an SSH host after its Proxmox node (or set "Proxmox node") to get node shells and VM/LXC consoles.
+- Name it after a VM to get "SSH into the VM" from that VM's Connect button.
+- Docker needs the user in the `docker` group, or turn on "Use sudo for docker" (needs passwordless sudo for docker).
+
+## Build
+
+Needs JDK 17+ and Android SDK platform 37.
+
+```sh
+./gradlew assembleRelease        # app/build/outputs/apk/release/app-release.apk
+./gradlew testDebugUnitTest      # Proxmox client + UI smoke tests (Robolectric)
+```
+
+Release signing reads `keystore.properties` (gitignored):
+
+```
+storeFile=pocketlab-release.jks
+storePassword=...
+keyAlias=pocketlab
+keyPassword=...
+```
+
+Keep that keystore. Android only installs an update over an existing install if it is signed with the same key.
+
+The SSH integration test runs against a real sshd. Set `POCKETLAB_TEST_SSHD` to a directory with `authorized_keys` and `hostkey.pub`, run sshd on `127.0.0.1:2222`, and see `SshIntegrationTest` for the details.
+
+## Not done yet
+
+- Proxmox noVNC/SPICE graphical console. Use the serial console or SSH instead.
+- Editing VM settings, creating or cloning guests, and backups.
+- Biometric app lock.
