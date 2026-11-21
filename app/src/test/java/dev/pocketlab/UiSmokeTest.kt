@@ -107,7 +107,47 @@ class UiSmokeTest {
     }
 
     @Test fun workloads() = shoot("2-workloads", start = "workloads")
-    @Test fun guest() = shoot("3-guest", open = Routes.guest("c1", "pve2", "qemu", 202))
+    @Test fun guest() {
+        // A fake Proxmox API (self-signed cert, pinned) so the detail screen shows real config, graphs and snapshots.
+        val cert = okhttp3.tls.HeldCertificate.Builder().commonName("pve2").build()
+        val server = mockwebserver3.MockWebServer()
+        server.useHttps(okhttp3.tls.HandshakeCertificates.Builder().heldCertificate(cert).build().sslSocketFactory())
+        val now = System.currentTimeMillis() / 1000
+        val rrd = (0 until 60).joinToString(",") { i ->
+            val cpu = 0.02 + 0.015 * kotlin.math.sin(i / 6.0) + (if (i in 38..42) 0.2 else 0.0)
+            """{"time":${now - (60 - i) * 60},"cpu":$cpu,"mem":${1.2e9 + i * 4e6},"maxmem":2147483648}"""
+        }
+        server.dispatcher = object : mockwebserver3.Dispatcher() {
+            override fun dispatch(request: mockwebserver3.RecordedRequest): mockwebserver3.MockResponse {
+                val path = request.url.encodedPath
+                val body = when {
+                    path.endsWith("/config") -> """{"data":{"cores":2,"sockets":1,"cpu":"host","memory":"2048","balloon":"0","ostype":"l26",
+                        "scsi0":"lab-nvme:vm-202-disk-0,size=32G","net0":"virtio=BC:24:11:00:00:01,bridge=vmbr0,firewall=1",
+                        "serial0":"socket","agent":"1","onboot":"1","boot":"order=scsi0"}}"""
+                    path.endsWith("/rrddata") -> """{"data":[$rrd]}"""
+                    path.endsWith("/snapshot") -> """{"data":[{"name":"current","running":1},
+                        {"name":"before_upgrade","description":"Debian 13 point release","snaptime":${now - 86400 * 3}},
+                        {"name":"fresh_install","snaptime":${now - 86400 * 40}}]}"""
+                    path.endsWith("/status/current") -> """{"data":{"qmpstatus":"running"}}"""
+                    else -> return mockwebserver3.MockResponse.Builder().code(404).build()
+                }
+                return mockwebserver3.MockResponse.Builder().body(body).build()
+            }
+        }
+        server.start()
+        val pin = java.security.MessageDigest.getInstance("SHA-256").digest(cert.certificate.encoded).joinToString(":") { "%02X".format(it) }
+        lab.store.update { c -> c.copy(clusters = listOf(cluster.copy(baseUrl = "https://127.0.0.1:${server.port}", pinnedCertSha256 = pin))) }
+        try {
+            compose.setContent {
+                val cfg by lab.store.config.collectAsStateWithLifecycle()
+                PocketlabTheme(cfg.appearance) { PocketlabRoot(poll = false, openRoute = Routes.guest("c1", "pve2", "qemu", 202)) }
+            }
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("2 cores", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Failed", substring = true).assertDoesNotExist()
+            val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
+            File(outDir, "3-guest.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        } finally { server.close() }
+    }
     @Test fun container() = shoot("4-container", open = Routes.container("h1", "9b24f266c05f00"))
     @Test fun hosts() = shoot("5-hosts", start = "hosts")
     @Test fun terminalTab() = shoot("6-terminal", start = "terminal")

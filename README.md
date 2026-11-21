@@ -3,6 +3,18 @@
 A phone app for your homelab: Proxmox VMs and containers, Docker containers, and SSH terminals.
 Everything runs on the phone and talks straight to your servers. There is no cloud service, no account and no analytics.
 
+## Screenshots
+
+| Overview | Workloads | VM detail |
+|:-:|:-:|:-:|
+| <img src="docs/screenshots/overview.png" width="260" alt="Overview: hosts reporting, running workloads, items that need attention"> | <img src="docs/screenshots/workloads.png" width="260" alt="Workloads grouped by cluster and node, with search and VM/LXC/Container filters"> | <img src="docs/screenshots/vm-detail.png" width="260" alt="VM detail: power actions, CPU and memory for the last hour, read-only settings"> |
+| **Container** | **Node** | **Light theme** |
+| <img src="docs/screenshots/container.png" width="260" alt="Docker container: power actions, logs, shell, image, compose project and ports"> | <img src="docs/screenshots/node.png" width="260" alt="Proxmox node: CPU and memory graphs, node shell, guests"> | <img src="docs/screenshots/light-theme.png" width="260" alt="Overview in light mode with the Catppuccin theme and purple accent"> |
+| **Appearance** | **Add a Proxmox cluster** | **First run** |
+| <img src="docs/screenshots/appearance.png" width="260" alt="Appearance settings: mode, eight themes, six accents"> | <img src="docs/screenshots/add-cluster.png" width="260" alt="Add-cluster form with the commands to create a least-privilege API token"> | <img src="docs/screenshots/first-run.png" width="260" alt="First-run screen with buttons to add a Proxmox cluster or SSH host"> |
+
+These are rendered from the app's real UI code by the Robolectric smoke tests (`UiSmokeTest`), using sample data and a fake Proxmox API. To regenerate them, run `./gradlew testDebugUnitTest --tests dev.pocketlab.UiSmokeTest`; the full-size images land in `app/build/screens/`.
+
 ## What it does
 
 - **Overview**: hosts reporting, running workloads, and a "needs attention" list (offline nodes, unhealthy or crashed containers, nodes with memory above 92%).
