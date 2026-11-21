@@ -59,6 +59,7 @@ object HttpClients {
     private val base = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(45, TimeUnit.SECONDS)
         .build()
 
     fun forPin(pinnedSha256: String?): OkHttpClient {

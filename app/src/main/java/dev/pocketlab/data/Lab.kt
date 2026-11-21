@@ -57,17 +57,44 @@ class Lab(val store: SecureStore) {
     fun host(hostId: String) = config.hosts.firstOrNull { it.id == hostId }
     fun docker(hostId: String) = host(hostId)?.let { DockerClient(it, config.keys) }
 
-    suspend fun refresh() {
-        if (!mutex.tryLock()) return
+    /** Bumped whenever a single target is refreshed, so an older full refresh doesn't overwrite it. */
+    private val versions = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private fun bump(id: String) { versions.merge(id, 1L, Long::plus) }
+
+    /**
+     * Polls everything in parallel. Each target fails on its own (SSH execs have hard deadlines and
+     * HTTP calls a call timeout), so one wedged host can't hold up the rest. [wait] = true (pull to
+     * refresh) waits for an in-flight poll instead of silently doing nothing.
+     */
+    suspend fun refresh(wait: Boolean = false) {
+        if (wait) mutex.lock() else if (!mutex.tryLock()) return
         try {
             _snap.update { it.copy(refreshing = true) }
             val cfg = config
+            val started = HashMap(versions)
             coroutineScope {
-                val c = cfg.clusters.map { cl -> async { cl.id to loadCluster(cl) } }
-                val h = cfg.hosts.map { host -> async { host.id to loadHost(host, cfg.keys) } }
-                val clusters = c.awaitAll().toMap()
-                val hosts = h.awaitAll().toMap()
-                _snap.value = LabSnapshot(clusters, hosts, System.currentTimeMillis(), false)
+                val c = cfg.clusters.map { cl -> async { cl to loadCluster(cl) } }
+                val h = cfg.hosts.map { host -> async { host to loadHost(host, cfg.keys) } }
+                val clusters = c.awaitAll()
+                val hosts = h.awaitAll()
+                _snap.update { cur ->
+                    val now = config
+                    // Only apply results whose target is unchanged since we started and that no
+                    // single-target refresh has superseded meanwhile; drop removed targets.
+                    fun fresh(id: String) = versions[id] == started[id]
+                    LabSnapshot(
+                        clusters = now.clusters.associate { cl ->
+                            val r = clusters.firstOrNull { it.first.id == cl.id }
+                            cl.id to (if (r != null && r.first == cl && fresh(cl.id)) r.second else cur.clusters[cl.id] ?: ClusterState())
+                        },
+                        hosts = now.hosts.associate { ho ->
+                            val r = hosts.firstOrNull { it.first.id == ho.id }
+                            ho.id to (if (r != null && r.first == ho && fresh(ho.id)) r.second else cur.hosts[ho.id] ?: HostState())
+                        },
+                        updatedAt = System.currentTimeMillis(),
+                        refreshing = false,
+                    )
+                }
             }
         } finally {
             _snap.update { it.copy(refreshing = false) }
@@ -78,12 +105,14 @@ class Lab(val store: SecureStore) {
     suspend fun refreshCluster(id: String) {
         val cl = config.clusters.firstOrNull { it.id == id } ?: return
         val st = loadCluster(cl)
+        bump(id)
         _snap.update { it.copy(clusters = it.clusters + (id to st)) }
     }
 
     suspend fun refreshHost(id: String) {
         val h = host(id) ?: return
         val st = loadHost(h, config.keys)
+        bump(id)
         _snap.update { it.copy(hosts = it.hosts + (id to st)) }
     }
 
@@ -95,19 +124,23 @@ class Lab(val store: SecureStore) {
             untrusted = e.untrustedCert(), loaded = true)
     }
 
-    private suspend fun loadHost(h: SshHost, keys: List<SshKey>): HostState = coroutineScope {
+    private suspend fun loadHost(h: SshHost, keys: List<SshKey>): HostState {
+        // Reachability is decided by connecting, not by whether the stats script parses.
         try {
-            val stats = HostStatsProbe.probe(h, keys)
-            var containers = emptyList<Container>()
-            var dockerErr: String? = null
-            if (h.dockerEnabled) {
-                try { containers = DockerClient(h, keys).list() } catch (e: Exception) { dockerErr = e.message }
-            }
-            HostState(stats, containers, dockerError = dockerErr, loaded = true)
+            SshPool.client(h, keys)
         } catch (e: HostKeyException) {
-            HostState(error = e.message, hostKey = e, loaded = true)
+            return HostState(error = e.message, hostKey = e, loaded = true)
         } catch (e: Exception) {
-            HostState(error = e.message ?: e.javaClass.simpleName, loaded = true)
+            return HostState(error = e.message ?: e.javaClass.simpleName, loaded = true)
+        }
+        return coroutineScope {
+            val stats = async { runCatching { HostStatsProbe.probe(h, keys) }.getOrNull() }
+            val docker = async {
+                if (!h.dockerEnabled) emptyList<Container>() to null
+                else try { DockerClient(h, keys).list() to null } catch (e: Exception) { emptyList<Container>() to (e.message ?: e.javaClass.simpleName) }
+            }
+            val (containers, dockerErr) = docker.await()
+            HostState(stats.await(), containers, dockerError = dockerErr, loaded = true)
         }
     }
 

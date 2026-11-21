@@ -38,6 +38,8 @@ data class SshHost(
     val dockerSudo: Boolean = false,
     /** Proxmox node name this host is (enables "console over SSH" for guests on that node). */
     val proxmoxNode: String? = null,
+    /** Cluster that [proxmoxNode] belongs to; node names like "pve" repeat across standalone servers. */
+    val proxmoxClusterId: String? = null,
 )
 
 @Serializable

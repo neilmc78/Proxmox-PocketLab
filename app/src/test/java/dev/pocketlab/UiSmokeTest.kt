@@ -116,6 +116,7 @@ class UiSmokeTest {
     @Test fun editCluster() = shoot("9-add-cluster", open = Routes.editCluster())
     @Test fun editHost() = shoot("10-add-host", open = Routes.editHost())
     @Test fun keys() = shoot("11-keys", open = "keys")
+    @Test fun logs() = shoot("15-logs", open = Routes.logs("h1", "9b24f266c05f00"))
     @Test fun node() = shoot("12-node", open = Routes.node("c1", "pve2"))
 
     @Test fun guestPowerSheetAndConfirm() {

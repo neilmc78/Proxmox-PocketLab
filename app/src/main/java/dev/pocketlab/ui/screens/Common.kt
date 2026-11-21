@@ -30,7 +30,7 @@ fun labConfig() = lab.store.config.collectAsStateWithLifecycle().value
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RefreshList(modifier: Modifier = Modifier, onRefresh: suspend () -> Unit = { lab.refresh() }, content: LazyListScope.() -> Unit) {
+fun RefreshList(modifier: Modifier = Modifier, onRefresh: suspend () -> Unit = { lab.refresh(wait = true) }, content: LazyListScope.() -> Unit) {
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
     PullToRefreshBox(isRefreshing = refreshing, onRefresh = {

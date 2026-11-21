@@ -18,6 +18,10 @@ Everything runs on the phone and talks straight to your servers. There is no clo
 - **SSH algorithms**: AEAD/CTR ciphers only (ChaCha20-Poly1305, AES-GCM, AES-CTR), curve25519/ECDH/strong DH key exchange, and SHA-2 MACs, with SHA-1 kept as a last resort. No CBC, RC4, 3DES, MD5 or DSA.
 - **Proxmox TLS**: a publicly trusted cert is accepted as normal. A self-signed cert (the Proxmox default) is shown to you with its SHA-256 fingerprint. Once you trust it, only that exact cert is accepted and any change is refused until you approve it again.
 - **SSH host keys**: trust on first use, with the same `SHA256:` fingerprint `ssh-keygen -lf` prints. If the key changes, the connection is refused and you get a man-in-the-middle warning.
+- Screens are marked secure (`FLAG_SECURE`): they don't appear in the recents thumbnail, screenshots or screen recordings.
+- Secret fields use a password keyboard with autocorrect off, so the keyboard doesn't learn or sync them.
+- If saved settings can't be decrypted, the file is kept under a unique name and the app says so. A temporary Keystore error never overwrites them.
+- Every remote command has a deadline and SSH uses real keep-alives, so a hung `docker` or a dropped Wi-Fi link can't freeze polling. Power actions are never retried after they were sent.
 - Cleartext HTTP is disabled app-wide. The app's only permission is `INTERNET`.
 
 ## Setup
@@ -40,7 +44,7 @@ Use `pocketlab@pve!phone` as the token ID and the printed secret. Skip the `Pock
 
 In **Settings → SSH keys → Generate Ed25519**, copy the public key into `~/.ssh/authorized_keys` on each host, then add the host.
 
-- Name an SSH host after its Proxmox node (or set "Proxmox node") to get node shells and VM/LXC consoles.
+- Name an SSH host after its Proxmox node, or pick the node in "Proxmox node", to get node shells and VM/LXC consoles. With more than one cluster, pick the node chip so the link includes the cluster: Pocketlab won't guess between two nodes that share a name.
 - Name it after a VM to get "SSH into the VM" from that VM's Connect button.
 - Docker needs the user in the `docker` group, or turn on "Use sudo for docker" (needs passwordless sudo for docker).
 

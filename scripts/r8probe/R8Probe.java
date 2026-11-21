@@ -37,7 +37,7 @@ public class R8Probe {
     }
 
     static SshHost host(SshKey k, String fp, int port) {
-        return new SshHost("h", "local", "127.0.0.1", port, System.getProperty("user.name"), SshAuthType.KEY, null, k.getId(), fp, true, false, null);
+        return new SshHost("h", "local", "127.0.0.1", port, System.getProperty("user.name"), SshAuthType.KEY, null, k.getId(), fp, true, false, null, null);
     }
 
     static String run(SSHClient c, String cmd) throws Exception {
@@ -87,6 +87,16 @@ public class R8Probe {
             try (SSHClient c = SshPool.INSTANCE.open(host(k, a[4], port), List.of(k), new HardenedSshConfig())) {
                 check(run(c, "echo " + im[0]).equals(im[0] + "\n"), "imported key " + im[0]);
             }
+        }
+
+        long t0 = System.nanoTime();
+        try {
+            BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE, (s, cont) -> SshPool.INSTANCE.exec(h, keys, "sleep 60", 2, cont));
+            check(false, "hung command hits its deadline");
+        } catch (Exception e) {
+            // Kotlin doesn't declare checked exceptions, so catch broadly and check the type.
+            check(e instanceof dev.pocketlab.ssh.SshTimeoutException && (System.nanoTime() - t0) / 1_000_000_000L < 10,
+                "hung command hits its deadline (" + e.getClass().getSimpleName() + ")");
         }
 
         DockerClient dc = new DockerClient(h, keys);

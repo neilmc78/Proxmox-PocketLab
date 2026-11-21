@@ -7,7 +7,8 @@
 set -euo pipefail
 SSHD_DIR=$1; SSH_PORT=${2:-2222}
 WORK=$(mktemp -d)
-trap 'kill $PVE_PID 2>/dev/null || true' EXIT
+PVE_PID=
+trap 'kill ${PVE_PID:-} 2>/dev/null || true' EXIT
 CP=$(./gradlew -q --no-daemon :app:printReleaseClasspath 2>/dev/null | sed -n 's/^CP=//p')
 R8=$(find ~/.gradle/caches/modules-2 -name 'builder-*.jar' -path '*com.android.tools.build/builder*' | sort | tail -1)
 SDK=${ANDROID_HOME:-/opt/android-sdk}

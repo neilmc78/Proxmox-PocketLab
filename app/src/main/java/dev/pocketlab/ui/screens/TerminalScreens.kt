@@ -147,7 +147,7 @@ fun TermScreen(sessionId: String) {
                     })
                     DropdownMenuItem({ Text("Larger text") }, onClick = { fontSp = (fontSp + 1).coerceAtMost(28) })
                     DropdownMenuItem({ Text("Smaller text") }, onClick = { fontSp = (fontSp - 1).coerceAtLeast(7) })
-                    DropdownMenuItem({ Text("Reconnect") }, onClick = { menu = false; session.close(); TerminalSessions.reconnect(session) })
+                    DropdownMenuItem({ Text("Reconnect") }, onClick = { menu = false; TerminalSessions.reconnect(session) })
                     DropdownMenuItem({ Text("Close session") }, onClick = { menu = false; TerminalSessions.close(session.id); nav.popBackStack() })
                 }
             }

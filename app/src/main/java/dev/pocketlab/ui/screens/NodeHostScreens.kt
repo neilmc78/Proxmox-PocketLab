@@ -52,7 +52,7 @@ fun NodeScreen(clusterId: String, nodeName: String) {
     val guests = st?.guests?.filter { it.node == nodeName }.orEmpty()
     var rrd by remember { mutableStateOf<List<RrdPoint>>(emptyList()) }
     LaunchedEffect(nodeName) { rrd = runCatching { lab.client(clusterId)!!.nodeRrd(nodeName) }.getOrDefault(emptyList()) }
-    val sshHost = hostForNode(nodeName)
+    val sshHost = hostForNode(clusterId, nodeName)
 
     RefreshList(onRefresh = { lab.refreshCluster(clusterId) }) {
         item {
@@ -111,7 +111,7 @@ fun HostScreen(hostId: String) {
             when {
                 st == null || !st.loaded -> StatusLabel(Health.OFF, "Connecting…", Modifier.padding(vertical = 6.dp))
                 st.error != null -> StatusLabel(Health.BAD, "Unreachable", Modifier.padding(vertical = 6.dp))
-                else -> StatusLabel(Health.OK, "Connected · ${uptime(st.stats?.uptimeSec ?: 0)}", Modifier.padding(vertical = 6.dp))
+                else -> StatusLabel(Health.OK, "Connected" + (st.stats?.uptimeSec?.let { " · ${uptime(it)}" } ?: ""), Modifier.padding(vertical = 6.dp))
             }
             st?.hostKey?.let { hk ->
                 var show by remember { mutableStateOf(false) }
@@ -126,9 +126,10 @@ fun HostScreen(hostId: String) {
             st?.stats?.let { s ->
                 Spacer(Modifier.height(8.dp))
                 LabCard {
-                    KeyValueRow("CPU", pct(s.cpu) + "   (load ${s.load})")
+                    KeyValueRow("CPU", (s.cpu?.let(::pct) ?: "–") + (s.load?.let { "   (load $it)" } ?: ""))
                     Divider()
-                    KeyValueRow("Memory", "${bytes(s.memUsed)} of ${bytes(s.memTotal)} · ${pct(s.memUsed.toDouble() / s.memTotal.coerceAtLeast(1))}")
+                    KeyValueRow("Memory", if (s.memUsed != null && s.memTotal != null)
+                        "${bytes(s.memUsed)} of ${bytes(s.memTotal)} · ${pct(s.memFraction ?: 0.0)}" else "–")
                 }
             }
             Spacer(Modifier.height(12.dp))

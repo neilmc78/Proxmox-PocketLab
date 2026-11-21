@@ -63,7 +63,7 @@ fun HostsScreen() {
                     if (i > 0) Divider()
                     val st = snap.hosts[h.id]
                     HostRow(h.name, when { st == null -> Health.OFF; st.error != null -> Health.BAD; else -> Health.OK },
-                        "${h.username}@${h.address}", st?.stats?.cpu?.toFloat(), st?.stats?.let { it.memUsed.toFloat() / it.memTotal.coerceAtLeast(1) }) {
+                        "${h.username}@${h.address}", st?.stats?.cpu?.toFloat(), st?.stats?.memFraction?.toFloat()) {
                         nav.navigate(Routes.host(h.id))
                     }
                 }

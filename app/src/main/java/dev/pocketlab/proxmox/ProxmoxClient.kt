@@ -131,6 +131,16 @@ class ProxmoxClient(private val cluster: ProxmoxCluster) {
         call("GET", "${gp(g)}/config").jsonObject
             .mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull ?: v.toString() }
 
+    /**
+     * /cluster/resources reports a paused VM as "running"; only status/current's qmpstatus tells.
+     * Returns the guest with status "paused" when QEMU is paused or suspended.
+     */
+    suspend fun withLiveStatus(g: PveGuest): PveGuest {
+        if (g.type != GuestType.QEMU || !g.running) return g
+        val qmp = call("GET", "${gp(g)}/status/current").jsonObject.str("qmpstatus")
+        return if (qmp == "paused" || qmp == "suspended") g.copy(status = "paused") else g
+    }
+
     suspend fun rrd(g: PveGuest): List<RrdPoint> =
         call("GET", "${gp(g)}/rrddata?timeframe=hour&cf=AVERAGE").jsonArray.map {
             val o = it.jsonObject

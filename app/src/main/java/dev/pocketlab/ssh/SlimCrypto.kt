@@ -102,14 +102,15 @@ class HardenedSshConfig : DefaultConfig() {
 
     override fun initKeyAlgorithms() {
         // No DSA (removed from OpenSSH). ssh-rsa (SHA-1 signatures) only as a last resort for old servers.
+        // No *-cert-v01 host key types: we pin plain host keys (there's no CA to verify certificates
+        // against), and a certificate's fingerprint wouldn't match `ssh-keygen -lf` and would change
+        // on every re-issue.
         keyAlgorithms = listOf(
-            KeyAlgorithms.EdDSA25519CertV01(), KeyAlgorithms.EdDSA25519(),
+            KeyAlgorithms.EdDSA25519(),
             KeyAlgorithms.SkSSHEd25519(), KeyAlgorithms.SkECDSANistp256(),
-            KeyAlgorithms.ECDSASHANistp521CertV01(), KeyAlgorithms.ECDSASHANistp521(),
-            KeyAlgorithms.ECDSASHANistp384CertV01(), KeyAlgorithms.ECDSASHANistp384(),
-            KeyAlgorithms.ECDSASHANistp256CertV01(), KeyAlgorithms.ECDSASHANistp256(),
+            KeyAlgorithms.ECDSASHANistp521(), KeyAlgorithms.ECDSASHANistp384(), KeyAlgorithms.ECDSASHANistp256(),
             KeyAlgorithms.RSASHA512(), KeyAlgorithms.RSASHA256(),
-            KeyAlgorithms.SSHRSACertV01(), KeyAlgorithms.SSHRSA(),
+            KeyAlgorithms.SSHRSA(),
         )
     }
 }

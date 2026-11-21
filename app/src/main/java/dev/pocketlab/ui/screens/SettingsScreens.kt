@@ -100,7 +100,7 @@ fun SettingsScreen() {
                 }
             }
             SectionTitle("About")
-            Text("Pocketlab 0.1.0 · open source, built for you.", color = t.textDim)
+            Text("Pocketlab 0.2.0 · open source, built for you.", color = t.textDim)
             Text("Terminal: ConnectBot termlib (Apache 2.0) · SSH: sshj (Apache 2.0)", color = t.textDim, style = MaterialTheme.typography.bodySmall)
         }
     }
@@ -252,8 +252,10 @@ fun KeysScreen() {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true)
                     OutlinedTextField(priv, { priv = it }, label = { Text("Private key (OpenSSH / PEM)") }, minLines = 4, maxLines = 8,
-                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
-                    OutlinedTextField(pass, { pass = it }, label = { Text("Passphrase (if any)") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        keyboardOptions = RawTextKeyboard)
+                    OutlinedTextField(pass, { pass = it }, label = { Text("Passphrase (if any)") }, singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(), keyboardOptions = SecretKeyboard)
                 }
             },
             confirmButton = { TextButton(enabled = priv.contains("PRIVATE KEY"), onClick = {

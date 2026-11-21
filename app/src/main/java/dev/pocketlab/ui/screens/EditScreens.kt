@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -62,6 +63,12 @@ private fun Form(title: String, content: @Composable () -> Unit) {
     }
 }
 
+/** Password keyboard with autocorrect off: the IME must not learn, suggest or cloud-sync secrets. */
+val SecretKeyboard = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false)
+
+/** For pasted key material: no learning, no autocorrect, no "smart" punctuation. */
+val RawTextKeyboard = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false)
+
 @Composable
 private fun Help(text: String) = Text(text, style = MaterialTheme.typography.bodySmall, color = LocalTones.current.textDim)
 
@@ -88,8 +95,13 @@ fun EditClusterScreen(id: String?) {
         return u
     }
 
+    // A pin belongs to an address: pointing the cluster somewhere else starts a fresh first-use
+    // check instead of a scary (and wrong) "certificate changed" warning.
+    fun effectivePin(): String? =
+        if (existing != null && pin == existing.pinnedCertSha256 && existing.baseUrl != normalizedUrl()) null else pin
+
     fun build() = ProxmoxCluster(id = existing?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim().ifBlank { "Proxmox" },
-        baseUrl = normalizedUrl(), tokenId = tokenId.trim(), tokenSecret = secret.trim(), pinnedCertSha256 = pin)
+        baseUrl = normalizedUrl(), tokenId = tokenId.trim(), tokenSecret = secret.trim(), pinnedCertSha256 = effectivePin())
 
     fun testAndSave() = scope.launch {
         busy = true; error = null
@@ -114,7 +126,8 @@ fun EditClusterScreen(id: String?) {
         OutlinedTextField(tokenId, { tokenId = it }, Modifier.fillMaxWidth(), label = { Text("API token ID") }, singleLine = true,
             placeholder = { Text("pocketlab@pve!phone") })
         OutlinedTextField(secret, { secret = it }, Modifier.fillMaxWidth(), label = { Text("API token secret") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(), placeholder = { Text("xxxxxxxx-xxxx-…") })
+            visualTransformation = PasswordVisualTransformation(), placeholder = { Text("xxxxxxxx-xxxx-…") },
+            keyboardOptions = SecretKeyboard)
         Help("Create a dedicated user and token on a node shell, e.g.:")
         Text("""pveum user add pocketlab@pve
 pveum acl modify / -user pocketlab@pve -role PVEAuditor
@@ -132,8 +145,9 @@ pveum user token add pocketlab@pve phone --privsep 0""", fontFamily = FontFamily
     }
 
     trust?.let { (fp, subject) ->
-        TrustDialog(if (pin != null) "Certificate changed" else "Trust this certificate?",
-            "${normalizedUrl()} presents a certificate that isn't signed by a public CA (normal for Proxmox).\n$subject\nSHA-256:", fp, pin != null,
+        val changed = effectivePin() != null
+        TrustDialog(if (changed) "Certificate changed" else "Trust this certificate?",
+            "${normalizedUrl()} presents a certificate that isn't signed by a public CA (normal for Proxmox).\n$subject\nSHA-256:", fp, changed,
             onTrust = { pin = fp; testAndSave() }, onDismiss = { trust = null })
     }
     if (confirmDelete && existing != null) AlertDialog(onDismissRequest = { confirmDelete = false },
@@ -163,18 +177,25 @@ fun EditHostScreen(id: String?) {
     var docker by remember { mutableStateOf(existing?.dockerEnabled ?: true) }
     var dockerSudo by remember { mutableStateOf(existing?.dockerSudo ?: false) }
     var node by remember { mutableStateOf(existing?.proxmoxNode ?: "") }
+    var nodeCluster by remember { mutableStateOf(existing?.proxmoxClusterId) }
     var fp by remember { mutableStateOf(existing?.hostKeyFingerprint) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var trust by remember { mutableStateOf<HostKeyException?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
-    val knownNodes = labSnapshot().clusters.values.flatMap { it.nodes.map { n -> n.name } }.distinct()
+    val clusterNames = cfg.clusters.associate { it.id to it.name }
+    val knownNodes = labSnapshot().clusters.values.flatMap { it.nodes.map { n -> n.clusterId to n.name } }.distinct()
+
+    fun sameEndpoint() = existing != null && existing.address == address.trim() && existing.port == (port.toIntOrNull() ?: 22)
+    // A host key belongs to an address: a changed address/port means a fresh first-use check, not a MITM warning.
+    fun effectiveFp(): String? = if (existing != null && fp == existing.hostKeyFingerprint && !sameEndpoint()) null else fp
 
     fun build() = SshHost(
         id = existing?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim().ifBlank { address.trim() },
         address = address.trim(), port = port.toIntOrNull() ?: 22, username = user.trim(), authType = auth,
         password = password.takeIf { auth == SshAuthType.PASSWORD }, keyId = keyId.takeIf { auth == SshAuthType.KEY },
-        hostKeyFingerprint = fp, dockerEnabled = docker, dockerSudo = dockerSudo, proxmoxNode = node.trim().ifBlank { null },
+        hostKeyFingerprint = effectiveFp(), dockerEnabled = docker, dockerSudo = dockerSudo, proxmoxNode = node.trim().ifBlank { null },
+        proxmoxClusterId = nodeCluster.takeIf { node.isNotBlank() },
     )
 
     fun testAndSave() = scope.launch {
@@ -210,7 +231,7 @@ fun EditHostScreen(id: String?) {
         }
         if (auth == SshAuthType.PASSWORD) {
             OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Password") }, singleLine = true,
-                visualTransformation = PasswordVisualTransformation())
+                visualTransformation = PasswordVisualTransformation(), keyboardOptions = SecretKeyboard)
         } else {
             if (cfg.keys.isEmpty()) Help("No keys yet.")
             cfg.keys.forEach { k ->
@@ -228,9 +249,13 @@ fun EditHostScreen(id: String?) {
             Column(Modifier.weight(1f)) { Text("Use sudo for docker"); Help("Only if the user isn't in the docker group (needs passwordless sudo)") }
             Switch(dockerSudo, { dockerSudo = it })
         }
-        OutlinedTextField(node, { node = it }, Modifier.fillMaxWidth(), label = { Text("Proxmox node (optional)") }, singleLine = true)
-        if (knownNodes.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            knownNodes.take(5).forEach { n -> FilterChip(node == n, { node = if (node == n) "" else n }, label = { Text(n) }) }
+        OutlinedTextField(node, { node = it; nodeCluster = null }, Modifier.fillMaxWidth(), label = { Text("Proxmox node (optional)") }, singleLine = true)
+        if (knownNodes.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            knownNodes.forEach { (cid, n) ->
+                val selected = node == n && nodeCluster == cid
+                val label = if (clusterNames.size > 1) "$n · ${clusterNames[cid]}" else n
+                FilterChip(selected, { if (selected) { node = ""; nodeCluster = null } else { node = n; nodeCluster = cid } }, label = { Text(label) })
+            }
         }
         Help("Set this if the host is a Proxmox node: enables node shells and VM/LXC consoles (qm terminal / pct enter).")
         fp?.let { Help("Trusted host key: $it") }

@@ -9,6 +9,7 @@ import dev.pocketlab.ssh.HostKeyException
 import dev.pocketlab.ssh.HostStatsProbe
 import dev.pocketlab.ssh.SlimCryptoProvider
 import dev.pocketlab.ssh.SshPool
+import dev.pocketlab.ssh.SshTimeoutException
 import dev.pocketlab.ssh.generateEd25519
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -96,7 +97,7 @@ class SshIntegrationTest {
         val keys = c.keyAlgorithms.map { it.name }
         assertTrue(kex.none { it == "diffie-hellman-group1-sha1" || it == "diffie-hellman-group-exchange-sha1" })
         assertTrue(macs.none { "md5" in it || "ripemd" in it || it.endsWith("-96") })
-        assertTrue(keys.none { it == "ssh-dss" })
+        assertTrue(keys.none { it == "ssh-dss" || it.contains("cert-v01") })
         assertEquals(HardenedSshConfig.PREFERRED_CIPHERS, c.cipherFactories.map { it.name })
         assertEquals("ssh-rsa", keys.last())
     }
@@ -130,6 +131,35 @@ class SshIntegrationTest {
         }
     }
 
+    @Test fun hungCommandHitsDeadlineAndPoolRecovers() = runBlocking {
+        val key = newKey()
+        val h = host(key, fp("hostkey.pub"))
+        val t0 = System.nanoTime()
+        val e = runCatching { SshPool.exec(h, listOf(key), "sleep 60", timeoutSec = 2) }.exceptionOrNull()
+        val secs = (System.nanoTime() - t0) / 1e9
+        assertTrue("expected SshTimeoutException, got $e", e is SshTimeoutException)
+        assertTrue("took ${secs}s", secs < 10)
+        assertEquals("fine\n", SshPool.exec(h, listOf(key), "echo fine").stdout)
+        SshPool.dropAll()
+    }
+
+    @Test fun outputIsCappedAndStreamsDontDropLines() = runBlocking {
+        val key = newKey()
+        val h = host(key, fp("hostkey.pub"))
+        val big = SshPool.exec(h, listOf(key), "head -c 6000000 /dev/zero | tr '\\0' a", timeoutSec = 30)
+        assertEquals(SshPool.MAX_EXEC_OUTPUT, big.stdout.length)
+        assertEquals(0, big.exit)
+        // A slow collector must still see every line (no silent drops when the buffer fills).
+        var n = 0
+        SshPool.stream(h, listOf(key), "seq 1 20000").collect { n++; if (n % 2000 == 0) kotlinx.coroutines.delay(50) }
+        assertEquals(20000, n)
+        // One enormous line without a newline is truncated, not buffered until OOM.
+        val lines = SshPool.stream(h, listOf(key), "head -c 200000 /dev/zero | tr '\\0' b").toList()
+        assertEquals(1, lines.size)
+        assertTrue(lines[0].length < SshPool.MAX_LINE + 64 && lines[0].endsWith("[truncated]"))
+        SshPool.dropAll()
+    }
+
     @Test fun endToEnd() = runBlocking {
         val key = newKey()
         assertTrue(key.publicKey!!.startsWith("ssh-ed25519 "))
@@ -152,7 +182,7 @@ class SshIntegrationTest {
         assertEquals("hello\n", r.stdout); assertEquals("oops\n", r.stderr); assertEquals(3, r.exit)
 
         val stats = HostStatsProbe.probe(host, keys)
-        assertTrue(stats.memTotal > 0 && stats.cpu in 0.0..1.0)
+        assertTrue((stats.memTotal ?: 0) > 0 && stats.cpu!! in 0.0..1.0)
 
         val docker = DockerClient(host, keys)
         val cs = docker.list()

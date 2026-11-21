@@ -66,7 +66,10 @@ private fun actionsFor(g: PveGuest): List<PowerAction> {
     val what = if (vm) "VM" else "container"
     return buildList {
         if (!g.running && g.status != "paused") add(PowerAction("start", "Start", "Boots the $what.", false))
-        if (g.status == "paused" || g.status == "suspended") add(PowerAction("resume", "Resume", "Resumes the paused $what.", false))
+        if (g.status == "paused" || g.status == "suspended") {
+            add(PowerAction("resume", "Resume", "Resumes the paused $what.", false))
+            add(PowerAction("stop", "Stop", "Stops the paused $what immediately. Its in-memory state is lost.", true))
+        }
         if (g.running) {
             add(PowerAction("reboot", "Restart", "Asks the guest OS to reboot cleanly.", true))
             add(PowerAction("shutdown", "Shut down", "Asks the guest OS to shut down cleanly" + (if (vm) " (ACPI or guest agent)." else "."), true))
@@ -87,7 +90,9 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
     val scope = rememberCoroutineScope()
     val snap = labSnapshot()
     val cluster = labConfig().clusters.firstOrNull { it.id == clusterId }
-    val g = snap.clusters[clusterId]?.guests?.firstOrNull { it.vmid == vmid && it.type.api == type }
+    val listed = snap.clusters[clusterId]?.guests?.firstOrNull { it.vmid == vmid && it.type.api == type }
+    var qmpPaused by remember { mutableStateOf(false) }
+    val g = listed?.let { if (qmpPaused && it.running) it.copy(status = "paused") else it }
     var config by remember { mutableStateOf<Map<String, String>?>(null) }
     var rrd by remember { mutableStateOf<List<RrdPoint>>(emptyList()) }
     var snaps by remember { mutableStateOf<List<Snapshot>?>(null) }
@@ -102,6 +107,7 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
     suspend fun reload(guest: PveGuest) {
         val c = lab.client(clusterId) ?: return
         try {
+            qmpPaused = runCatching { c.withLiveStatus(guest).status == "paused" }.getOrDefault(false)
             config = c.config(guest)
             rrd = runCatching { c.rrd(guest) }.getOrDefault(emptyList())
             snaps = runCatching { c.snapshots(guest) }.getOrNull()
@@ -109,7 +115,7 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
         } catch (e: Exception) { loadError = e.message }
     }
 
-    LaunchedEffect(g?.key) { if (g != null && config == null) reload(g) }
+    LaunchedEffect(listed?.key) { if (listed != null && config == null) reload(listed) }
 
     fun runTask(label: String, block: suspend () -> String) {
         scope.launch {
@@ -120,13 +126,13 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
             } catch (e: Exception) { "$label failed: ${e.message}" }
             busy = null
             lab.refreshCluster(clusterId)
-            g?.let { reload(it) }
+            lab.snapshot.value.clusters[clusterId]?.guests?.firstOrNull { it.vmid == vmid && it.type.api == type }?.let { reload(it) }
             snackbar.showSnackbar(msg)
         }
     }
 
     Box(Modifier.fillMaxSize()) {
-        RefreshList(onRefresh = { lab.refreshCluster(clusterId); g?.let { reload(it) } }) {
+        RefreshList(onRefresh = { lab.refreshCluster(clusterId); listed?.let { reload(it) } }) {
             item {
                 dev.pocketlab.ui.components.TopBar(g?.name ?: "#$vmid", onBack = { nav.popBackStack() })
                 if (g == null) { Text("Loading…", color = t.textDim); return@item }
@@ -226,21 +232,21 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
         var ram by remember { mutableStateOf(false) }
         Text("Take snapshot", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
-        OutlinedTextField(name, { v -> name = v.filter { it.isLetterOrDigit() || it == '_' || it == '-' } }, Modifier.fillMaxWidth(), label = { Text("Name") }, singleLine = true)
+        OutlinedTextField(name, { v -> name = v.filter { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '_' || it == '-' }.take(40) }, Modifier.fillMaxWidth(), label = { Text("Name") }, singleLine = true)
         OutlinedTextField(desc, { desc = it }, Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text("Description") })
         if (g.type == GuestType.QEMU && g.running) Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(ram, { ram = it }); Text("Include RAM (slower, resumes exactly where it was)")
         }
         Spacer(Modifier.height(12.dp))
         Button(onClick = { snapSheet = false; runTask("Snapshot") { lab.client(clusterId)!!.createSnapshot(g, name, desc, ram) } },
-            enabled = name.isNotBlank() && name.first().isLetter(), modifier = Modifier.fillMaxWidth()) { Text("Take snapshot") }
+            enabled = name.length >= 2 && (name.first() in 'a'..'z' || name.first() in 'A'..'Z'), modifier = Modifier.fillMaxWidth()) { Text("Take snapshot") }
     }
 
     if (connectSheet) Sheet({ connectSheet = false }) {
         Text("Connect to ${g.name}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
         val guestHost = hostForGuest(g.name)
-        val nodeHost = hostForNode(g.node)
+        val nodeHost = hostForNode(g.clusterId, g.node)
         val consoleCmd = if (g.type == GuestType.QEMU) "qm terminal ${g.vmid}" else "pct enter ${g.vmid}"
         LabCard {
             NavRow("SSH into the ${g.type.label}", guestHost?.let { "${it.username}@${it.address}" } ?: "No SSH host named ${g.name}. Tap to add one.",

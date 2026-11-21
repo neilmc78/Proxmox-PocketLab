@@ -11,7 +11,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import android.os.Handler
+import java.util.concurrent.atomic.AtomicInteger
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.Session
 import org.connectbot.terminal.TerminalEmulator
@@ -44,11 +47,14 @@ class TerminalSession(
     private val _state = MutableStateFlow<TermState>(TermState.Connecting)
     val state: StateFlow<TermState> = _state.asStateFlow()
 
-    private val writer = Executors.newSingleThreadExecutor()
-    @Volatile private var client: SSHClient? = null
-    @Volatile private var shell: Session.Shell? = null
-    @Volatile private var command_: Session.Command? = null
-    @Volatile private var out: OutputStream? = null
+    private val writer = Executors.newSingleThreadExecutor { r -> Thread(r, "term-writer").apply { isDaemon = true } }
+
+    /** One live connection attempt. A new connect or a close bumps [generation]; stale attempts tear themselves down. */
+    private class Conn(val client: SSHClient, val resize: (Int, Int) -> Unit, val out: OutputStream)
+    private val generation = AtomicInteger(0)
+    @Volatile private var conn: Conn? = null
+    @Volatile private var job: Job? = null
+    @Volatile private var disposed = false
     @Volatile private var cols = 80
     @Volatile private var rows = 24
 
@@ -59,55 +65,80 @@ class TerminalSession(
         onKeyboardInput = { bytes -> send(bytes) },
         onResize = { d ->
             cols = d.columns; rows = d.rows
-            writer.execute {
-                runCatching { shell?.changeWindowDimensions(d.columns, d.rows, 0, 0) }
-                runCatching { (command_ as? Session.Shell)?.changeWindowDimensions(d.columns, d.rows, 0, 0) }
-            }
+            exec { conn?.resize?.invoke(d.columns, d.rows) }
         },
         autoDetectUrls = true,
     )
 
-    fun send(bytes: ByteArray) {
-        writer.execute {
-            try { out?.apply { write(bytes); flush() } } catch (_: Exception) { }
-        }
+    private fun exec(block: () -> Unit) {
+        if (disposed) return
+        runCatching { writer.execute { runCatching(block) } }
     }
 
+    fun send(bytes: ByteArray) = exec { conn?.out?.apply { write(bytes); flush() } }
+
     fun connect(scope: CoroutineScope) {
+        if (disposed) return
+        val myGen = generation.incrementAndGet()
+        job?.cancel()
+        conn?.client?.let { c -> exec { c.close() } }
+        conn = null
         _state.value = TermState.Connecting
-        scope.launch(Dispatchers.IO) {
+        job = scope.launch(Dispatchers.IO) {
+            var client: SSHClient? = null
             try {
                 val c = SshPool.open(host, keys)
                 client = c
+                if (generation.get() != myGen) return@launch // closed or superseded while connecting
                 val s = c.startSession()
                 s.allocatePTY("xterm-256color", cols, rows, 0, 0, emptyMap())
-                val input = if (command == null) {
-                    val sh = s.startShell(); shell = sh; out = sh.outputStream; sh.inputStream
+                val input: java.io.InputStream
+                if (command == null) {
+                    val sh = s.startShell()
+                    conn = Conn(c, { w, h -> sh.changeWindowDimensions(w, h, 0, 0) }, sh.outputStream)
+                    input = sh.inputStream
                 } else {
-                    val cmd = s.exec(command); command_ = cmd; out = cmd.outputStream; cmd.inputStream
+                    val cmd = s.exec(command)
+                    conn = Conn(c, { w, h -> (cmd as? Session.Shell)?.changeWindowDimensions(w, h, 0, 0) }, cmd.outputStream)
+                    input = cmd.inputStream
                 }
+                if (generation.get() != myGen) return@launch
                 _state.value = TermState.Connected
                 val buf = ByteArray(16 * 1024)
-                while (true) {
+                while (generation.get() == myGen) {
                     val n = input.read(buf)
                     if (n < 0) break
                     emulator.writeInput(buf, 0, n)
                 }
-                _state.value = TermState.Closed("Session ended")
+                if (generation.get() == myGen) _state.value = TermState.Closed("Session ended")
             } catch (e: HostKeyException) {
-                _state.value = TermState.HostKey(e)
+                if (generation.get() == myGen) _state.value = TermState.HostKey(e)
             } catch (e: Exception) {
-                _state.value = TermState.Closed(e.message ?: e.javaClass.simpleName)
+                if (generation.get() == myGen) _state.value = TermState.Closed(e.message ?: e.javaClass.simpleName)
             } finally {
                 runCatching { client?.close() }
-                client = null; shell = null; command_ = null; out = null
+                if (generation.get() == myGen) conn = null
             }
         }
     }
 
     fun close() {
-        writer.execute { runCatching { client?.close() } }
+        generation.incrementAndGet()
+        job?.cancel()
+        val c = conn?.client
+        conn = null
+        // Closing the client unblocks the reader; do it off the main thread.
+        if (c != null) Thread { runCatching { c.close() } }.apply { isDaemon = true }.start()
         _state.update { if (it is TermState.Closed) it else TermState.Closed("Disconnected") }
+    }
+
+    /** Final teardown: connection, writer thread, and the emulator's native state. */
+    fun dispose() {
+        close()
+        disposed = true
+        writer.shutdown()
+        // Let any screen still showing this emulator leave composition before freeing native memory.
+        Handler(Looper.getMainLooper()).postDelayed({ runCatching { emulator.close() } }, 2_000)
     }
 }
 
@@ -128,7 +159,7 @@ object TerminalSessions {
     fun get(id: String) = _sessions.value.firstOrNull { it.id == id }
 
     fun close(id: String) {
-        _sessions.value.firstOrNull { it.id == id }?.close()
+        _sessions.value.firstOrNull { it.id == id }?.dispose()
         _sessions.update { list -> list.filterNot { it.id == id } }
     }
 }

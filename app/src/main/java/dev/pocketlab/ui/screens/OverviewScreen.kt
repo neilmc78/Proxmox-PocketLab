@@ -101,6 +101,8 @@ fun OverviewScreen() {
             }
         }
 
+        lab.store.problem.value?.let { msg -> item { Spacer(Modifier.height(16.dp)); dev.pocketlab.ui.components.ErrorCard(msg) } }
+
         if (cfg.clusters.isEmpty() && cfg.hosts.isEmpty()) {
             item {
                 Spacer(Modifier.height(24.dp))
@@ -139,7 +141,7 @@ fun OverviewScreen() {
                         val st = snap.hosts[h.id]
                         val health = when { st == null || !st.loaded -> Health.OFF; st.error != null -> Health.BAD; else -> Health.OK }
                         HostRow(h.name, health, when { st == null || !st.loaded -> "Connecting…"; st.error != null -> "Unreachable"; else -> "Connected" },
-                            st?.stats?.cpu?.toFloat(), st?.stats?.let { it.memUsed.toFloat() / it.memTotal.coerceAtLeast(1) }) { nav.navigate(Routes.host(h.id)) }
+                            st?.stats?.cpu?.toFloat(), st?.stats?.memFraction?.toFloat()) { nav.navigate(Routes.host(h.id)) }
                     }
                 }
             }
