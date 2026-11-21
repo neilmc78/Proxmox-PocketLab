@@ -45,7 +45,7 @@ On any node:
 ```sh
 pveum user add pocketlab@pve
 pveum acl modify / -user pocketlab@pve -role PVEAuditor
-pveum role add PocketlabPower -privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback VM.Console"
+pveum role add PocketlabPower -privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback"
 pveum acl modify /vms -user pocketlab@pve -role PocketlabPower
 pveum user token add pocketlab@pve phone --privsep 0
 ```
@@ -83,6 +83,13 @@ keyPassword=...
 ```
 
 Keep that keystore. Android only installs an update over an existing install if it is signed with the same key.
+
+### CI and releases (GitHub Actions)
+
+- **Every PR / push to `main`** (`.github/workflows/android.yml`): unit tests + an R8 release build. The APKs are attached to the run as an artifact, signed with a throwaway debug key: good for trying a PR, but they won't update over a real install.
+- **Tag `vX.Y.Z` on `main`** (`.github/workflows/release.yml`): tests, builds APKs signed with your release key, refuses to publish anything debug-signed, and creates a GitHub Release with the APKs and `SHA256SUMS.txt`. The version name comes from the tag; the version code is `X*1000000 + Y*1000 + Z`, so every tag must be higher than the last.
+
+Release secrets (Settings → Secrets and variables → Actions): `KEYSTORE_BASE64` (`base64 -w0 pocketlab-release.jks`), `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
 
 The SSH integration test runs against a real sshd. Set `POCKETLAB_TEST_SSHD` to a directory with `authorized_keys` and `hostkey.pub`, run sshd on `127.0.0.1:2222`, and see `SshIntegrationTest` for the details.
 

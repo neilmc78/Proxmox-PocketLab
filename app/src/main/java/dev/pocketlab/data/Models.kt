@@ -7,7 +7,7 @@ import java.util.UUID
 data class ProxmoxCluster(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
-    /** e.g. https://10.0.10.81:8006 */
+    /** e.g. https://192.168.1.10:8006 */
     val baseUrl: String,
     /** user@realm!tokenname */
     val tokenId: String,
