@@ -47,14 +47,14 @@ jobs:
 
       - name: Upload test reports
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: test-reports
           path: app/build/reports/tests/
           retention-days: 7
 
       - name: Upload APKs
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: pocketlab-ci-${{ github.sha }}
           path: app/build/outputs/apk/release/*.apk
