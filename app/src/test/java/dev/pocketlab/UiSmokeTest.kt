@@ -7,6 +7,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import dev.pocketlab.data.Appearance
 import dev.pocketlab.data.AppConfig
@@ -157,6 +159,18 @@ class UiSmokeTest {
     @Test fun editHost() = shoot("10-add-host", open = Routes.editHost())
     @Test fun keys() = shoot("11-keys", open = "keys")
     @Test fun logs() = shoot("15-logs", open = Routes.logs("h1", "9b24f266c05f00"))
+    @Test fun secretRevealAndCopyCommands() {
+        shoot("16-edit-cluster", open = Routes.editCluster("c1"))
+        compose.onNodeWithContentDescription("Show API token secret").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Hide API token secret").assertExists()
+        compose.onNodeWithText("Copy commands", substring = true).performScrollTo().performClick()
+        compose.waitForIdle()
+        val ctx = org.robolectric.RuntimeEnvironment.getApplication()
+        val clip = (ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClip
+        org.junit.Assert.assertEquals(dev.pocketlab.ui.screens.PVE_TOKEN_SETUP, clip?.getItemAt(0)?.text?.toString())
+    }
+
     @Test fun node() = shoot("12-node", open = Routes.node("c1", "pve2"))
 
     @Test fun guestPowerSheetAndConfirm() {

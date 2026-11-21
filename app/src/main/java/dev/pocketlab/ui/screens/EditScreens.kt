@@ -1,5 +1,8 @@
 package dev.pocketlab.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +16,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -32,9 +42,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.pocketlab.data.ProxmoxCluster
@@ -68,6 +80,46 @@ val SecretKeyboard = KeyboardOptions(keyboardType = KeyboardType.Password, autoC
 
 /** For pasted key material: no learning, no autocorrect, no "smart" punctuation. */
 val RawTextKeyboard = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false)
+
+/** Hidden by default; the eye icon shows what was typed. Screenshots stay blocked either way (FLAG_SECURE). */
+@Composable
+fun SecretField(value: String, onValueChange: (String) -> Unit, label: String, modifier: Modifier = Modifier.fillMaxWidth(),
+                placeholder: String? = null) {
+    var shown by remember { mutableStateOf(false) }
+    OutlinedTextField(value, onValueChange, modifier, label = { Text(label) }, singleLine = true,
+        placeholder = placeholder?.let { { Text(it) } },
+        visualTransformation = if (shown) VisualTransformation.None else PasswordVisualTransformation(),
+        keyboardOptions = SecretKeyboard,
+        trailingIcon = {
+            IconButton(onClick = { shown = !shown }) {
+                Icon(if (shown) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, if (shown) "Hide $label" else "Show $label")
+            }
+        })
+}
+
+/** Commands to run on a Proxmox node to create a least-privilege user and API token. */
+const val PVE_TOKEN_SETUP = """pveum user add pocketlab@pve
+pveum acl modify / --users pocketlab@pve --roles PVEAuditor
+pveum role add PocketlabPower --privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback"
+pveum acl modify /vms --users pocketlab@pve --roles PocketlabPower
+pveum user token add pocketlab@pve phone --privsep 0"""
+
+/** Selectable monospace block with a copy button (the screen is FLAG_SECURE, so it can't be screenshotted). */
+@Composable
+fun CopyableCode(code: String, clipLabel: String) {
+    val ctx = LocalContext.current
+    val snackbar = LocalSnackbar.current
+    val scope = rememberCoroutineScope()
+    Column(Modifier.fillMaxWidth()) {
+        SelectionContainer(Modifier.horizontalScroll(rememberScrollState())) {
+            Text(code, fontFamily = FontFamily.Monospace, fontSize = 11.sp, softWrap = false)
+        }
+        OutlinedButton(onClick = {
+            (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(clipLabel, code))
+            scope.launch { snackbar.showSnackbar("Copied") }
+        }) { Icon(Icons.Outlined.ContentCopy, null); Text("  Copy commands") }
+    }
+}
 
 @Composable
 private fun Help(text: String) = Text(text, style = MaterialTheme.typography.bodySmall, color = LocalTones.current.textDim)
@@ -125,15 +177,10 @@ fun EditClusterScreen(id: String?) {
         Help("Any one node of the cluster. Port 8006 is added if you leave it out.")
         OutlinedTextField(tokenId, { tokenId = it }, Modifier.fillMaxWidth(), label = { Text("API token ID") }, singleLine = true,
             placeholder = { Text("pocketlab@pve!phone") })
-        OutlinedTextField(secret, { secret = it }, Modifier.fillMaxWidth(), label = { Text("API token secret") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(), placeholder = { Text("xxxxxxxx-xxxx-…") },
-            keyboardOptions = SecretKeyboard)
+        SecretField(secret, { secret = it }, "API token secret", placeholder = "xxxxxxxx-xxxx-…")
         Help("Create a dedicated user and token on a node shell, e.g.:")
-        Text("""pveum user add pocketlab@pve
-pveum acl modify / -user pocketlab@pve -role PVEAuditor
-pveum role add PocketlabPower -privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback"
-pveum acl modify /vms -user pocketlab@pve -role PocketlabPower
-pveum user token add pocketlab@pve phone --privsep 0""", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+        CopyableCode(PVE_TOKEN_SETUP, "Proxmox token setup")
+        Help("Run them in the node's Shell (Proxmox web UI → node → Shell). The last one prints the token ID (pocketlab@pve!phone) and the secret; the secret is shown only once.")
         Help("Read-only is enough to browse; power and snapshot buttons need the second role. Revoke the token in Proxmox any time.")
         if (pin != null) Help("Pinned certificate: $pin")
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -230,8 +277,7 @@ fun EditHostScreen(id: String?) {
             FilterChip(auth == SshAuthType.PASSWORD, { auth = SshAuthType.PASSWORD }, label = { Text("Password") })
         }
         if (auth == SshAuthType.PASSWORD) {
-            OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Password") }, singleLine = true,
-                visualTransformation = PasswordVisualTransformation(), keyboardOptions = SecretKeyboard)
+            SecretField(password, { password = it }, "Password")
         } else {
             if (cfg.keys.isEmpty()) Help("No keys yet.")
             cfg.keys.forEach { k ->

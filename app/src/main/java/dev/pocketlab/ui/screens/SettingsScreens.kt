@@ -46,7 +46,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.pocketlab.data.SshKey
@@ -254,8 +253,7 @@ fun KeysScreen() {
                     OutlinedTextField(priv, { priv = it }, label = { Text("Private key (OpenSSH / PEM)") }, minLines = 4, maxLines = 8,
                         textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                         keyboardOptions = RawTextKeyboard)
-                    OutlinedTextField(pass, { pass = it }, label = { Text("Passphrase (if any)") }, singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(), keyboardOptions = SecretKeyboard)
+                    SecretField(pass, { pass = it }, "Passphrase (if any)", Modifier)
                 }
             },
             confirmButton = { TextButton(enabled = priv.contains("PRIVATE KEY"), onClick = {
