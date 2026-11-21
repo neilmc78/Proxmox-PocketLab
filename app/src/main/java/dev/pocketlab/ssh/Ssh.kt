@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import net.schmizz.sshj.DefaultConfig
+import net.schmizz.sshj.Config
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.common.Buffer
 import net.schmizz.sshj.transport.verification.HostKeyVerifier
@@ -63,9 +63,10 @@ object SshPool {
     private val locks = ConcurrentHashMap<String, Mutex>()
 
     /** Opens a fresh, authenticated client. Throws [HostKeyException] when the key isn't pinned. */
-    fun open(host: SshHost, keys: List<SshKey>): SSHClient {
+    fun open(host: SshHost, keys: List<SshKey>, config: Config = HardenedSshConfig()): SSHClient {
+        SlimCryptoProvider.install()
         val verifier = PinnedVerifier(host.hostKeyFingerprint)
-        val c = SSHClient(DefaultConfig())
+        val c = SSHClient(config)
         c.addHostKeyVerifier(verifier)
         c.connectTimeout = 10_000
         c.timeout = 30_000

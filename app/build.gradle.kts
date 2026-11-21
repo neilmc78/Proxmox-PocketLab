@@ -50,6 +50,17 @@ android {
 
     buildFeatures { compose = true }
 
+    // One APK per CPU type: the terminal's native library is ~3 MB per ABI. Install the arm64-v8a
+    // APK on any phone from the last ~8 years; the others are for old 32-bit phones and emulators.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = false
+        }
+    }
+
     testOptions { unitTests { isIncludeAndroidResources = true } }
 
     packaging {
@@ -58,9 +69,13 @@ android {
                 "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
                 "META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*",
                 "META-INF/INDEX.LIST", "META-INF/*.kotlin_module",
+                // BouncyCastle's certificate-path report strings: unused (we never validate X.509 paths with BC).
+                "org/bouncycastle/**/*.properties",
             )
         }
-        jniLibs { useLegacyPackaging = false }
+        // Compressed inside the APK: a smaller download/sideload file at the cost of a one-off extract on install.
+        jniLibs { useLegacyPackaging = true }
+        dex { useLegacyPackaging = true }
     }
 }
 
@@ -83,7 +98,6 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.87")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.87")
     implementation("org.connectbot:termlib:0.3.15")
-    implementation("org.slf4j:slf4j-nop:2.0.17")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.18.1")
@@ -100,4 +114,14 @@ tasks.withType<Test>().configureEach {
     System.getenv("POCKETLAB_TEST_SSHD")?.let { environment("POCKETLAB_TEST_SSHD", it) }
     systemProperty("robolectric.dependency.repo.url", "https://maven-central.storage-download.googleapis.com/maven2")
     maxHeapSize = "3g"
+}
+
+// Prints the release runtime classpath (as Android class jars) so R8 can be run by hand in
+// class-file mode to test the shrunk code on the JVM. See scripts/r8-probe.sh.
+tasks.register("printReleaseClasspath") {
+    val files = configurations.getByName("releaseRuntimeClasspath").incoming.artifactView {
+        attributes { attribute(org.gradle.api.attributes.Attribute.of("artifactType", String::class.java), "android-classes-jar") }
+    }.files
+    inputs.files(files)
+    doLast { println("CP=" + files.files.joinToString(File.pathSeparator)) }
 }

@@ -15,6 +15,7 @@ Everything runs on the phone and talks straight to your servers. There is no clo
 ## Security model
 
 - API tokens, passwords and private keys are kept in one file encrypted with AES-256-GCM. The key is a non-exportable Android Keystore key (hardware-backed where the phone supports it). Backups and device transfer are disabled.
+- **SSH algorithms**: AEAD/CTR ciphers only (ChaCha20-Poly1305, AES-GCM, AES-CTR), curve25519/ECDH/strong DH key exchange, and SHA-2 MACs, with SHA-1 kept as a last resort. No CBC, RC4, 3DES, MD5 or DSA.
 - **Proxmox TLS**: a publicly trusted cert is accepted as normal. A self-signed cert (the Proxmox default) is shown to you with its SHA-256 fingerprint. Once you trust it, only that exact cert is accepted and any change is refused until you approve it again.
 - **SSH host keys**: trust on first use, with the same `SHA256:` fingerprint `ssh-keygen -lf` prints. If the key changes, the connection is refused and you get a man-in-the-middle warning.
 - Cleartext HTTP is disabled app-wide. The app's only permission is `INTERNET`.
@@ -48,9 +49,13 @@ In **Settings → SSH keys → Generate Ed25519**, copy the public key into `~/.
 Needs JDK 17+ and Android SDK platform 37.
 
 ```sh
-./gradlew assembleRelease        # app/build/outputs/apk/release/app-release.apk
+./gradlew assembleRelease        # app/build/outputs/apk/release/app-<abi>-release.apk (~3.5 MB each)
 ./gradlew testDebugUnitTest      # Proxmox client + UI smoke tests (Robolectric)
 ```
+
+Install `app-arm64-v8a-release.apk` on any phone from roughly 2017 onwards; `armeabi-v7a` is for old 32-bit phones and `x86_64` for emulators.
+
+`scripts/r8-probe.sh` re-runs the release shrinker in class-file mode and drives the shrunk SSH, Docker and crypto code against a real sshd. Use it after changing keep rules or dependencies.
 
 Release signing reads `keystore.properties` (gitignored):
 
