@@ -34,9 +34,12 @@ jobs:
           distribution: 'temurin'
 
       # Also validates gradle-wrapper.jar against Gradle's published checksums.
+      # cache-provider: basic = the MIT-licensed cache. v6's default ("enhanced") is proprietary and
+      # using it means accepting Gradle's Terms of Use.
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
         with:
+          cache-provider: basic
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: Unit tests

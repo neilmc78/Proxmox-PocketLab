@@ -51,8 +51,9 @@ jobs:
           distribution: 'temurin'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
         with:
+          cache-provider: basic
           cache-disabled: true   # release builds start clean
 
       - name: Write signing config
@@ -102,4 +103,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "Pocketlab $TAG" --generate-notes --verify-tag
+        # Works both for a bare `git push` of the tag and for a release you already published in the
+        # GitHub UI (which creates the tag): then the APKs are attached to that release.
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "Pocketlab $TAG" --generate-notes --verify-tag
+          fi
