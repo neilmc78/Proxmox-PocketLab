@@ -186,9 +186,9 @@ class UiSmokeTest {
     }
 
     @Test fun customTokenId() {
-        shoot("17-edit-cluster-custom", open = Routes.editCluster("c1"))
+        shoot("17a-edit-cluster", open = Routes.editCluster("c1"))
         compose.onNodeWithText("Use a different user or token").performScrollTo().performClick()
-        compose.waitForIdle()
+        snap("17-edit-cluster-custom")
         compose.onNodeWithText("API token ID").assertExists()
         compose.onNodeWithText("First time?", substring = true).assertDoesNotExist()
     }
