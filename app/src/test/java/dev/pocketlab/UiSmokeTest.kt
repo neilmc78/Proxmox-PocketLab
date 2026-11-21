@@ -160,6 +160,13 @@ class UiSmokeTest {
     @Test fun terminalTab() = shoot("6-terminal", start = "terminal")
     @Test fun settings() = shoot("7-settings", start = "settings")
     @Test fun appearance() = shoot("8-appearance", open = "appearance")
+    /** Small phone: the accent swatches must stay round, not get squeezed. */
+    @Config(qualifiers = "w320dp-h700dp-xhdpi")
+    @Test fun appearanceNarrow() {
+        shoot("8b-appearance-narrow", open = "appearance")
+        compose.onNodeWithText("Terminal text", substring = true).performScrollTo()  // past the accents, clear of the tab bar
+        snap("8c-appearance-narrow-accents")
+    }
     @Test fun editCluster() = shoot("9-add-cluster", open = Routes.editCluster())
     @Test fun editHost() = shoot("10-add-host", open = Routes.editHost())
     @Test fun keys() = shoot("11-keys", open = "keys")

@@ -43,7 +43,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -165,33 +169,49 @@ private fun BottomBar(nav: NavHostController, route: String) {
         route.startsWith("terminal") -> "terminal"
         else -> "settings"
     }
-    Row(
-        Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(36.dp)).background(t.surface).border(1.dp, t.outline, RoundedCornerShape(36.dp))
-            .padding(6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        tabs.forEach { tab ->
-            val selected = tab.route == current
-            Column(
-                Modifier.weight(1f).clip(RoundedCornerShape(30.dp))
-                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else t.surface)
-                    .clickable {
-                        if (tab.route == current) nav.popBackStack(tab.route, inclusive = false).let { ok -> if (!ok) nav.navigate(tab.route) }
-                        else nav.navigate(tab.route) {
-                            popUpTo("overview") { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
+    // One label size for all tabs: the largest (up to labelMedium) at which the longest label fits a
+    // tab's width, so narrow phones get slightly smaller labels instead of clipped ones.
+    val labelStyle = MaterialTheme.typography.labelMedium
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    BoxWithConstraints(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        val tabWidthPx = with(density) { ((maxWidth - 12.dp) / tabs.size - 6.dp).toPx() }
+        val labelSize = remember(tabWidthPx, labelStyle) {
+            var size = labelStyle.fontSize.value
+            fun widest(sz: Float) = tabs.maxOf {
+                measurer.measure(it.label, labelStyle.copy(fontSize = sz.sp, fontWeight = FontWeight.Bold), maxLines = 1, softWrap = false).size.width
+            }
+            while (size > 8f && widest(size) > tabWidthPx) size -= 0.5f
+            size.sp
+        }
+        Row(
+            Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(36.dp)).background(t.surface).border(1.dp, t.outline, RoundedCornerShape(36.dp))
+                .padding(6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            tabs.forEach { tab ->
+                val selected = tab.route == current
+                Column(
+                    Modifier.weight(1f).clip(RoundedCornerShape(30.dp))
+                        .background(if (selected) MaterialTheme.colorScheme.primaryContainer else t.surface)
+                        .clickable {
+                            if (tab.route == current) nav.popBackStack(tab.route, inclusive = false).let { ok -> if (!ok) nav.navigate(tab.route) }
+                            else nav.navigate(tab.route) {
+                                popUpTo("overview") { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
                         }
-                    }
-                    .padding(vertical = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                val color = if (selected) MaterialTheme.colorScheme.primary else t.textDim
-                Icon(tab.icon, tab.label, tint = color)
-                Spacer(Modifier.height(2.dp))
-                Text(tab.label, color = color, style = MaterialTheme.typography.labelMedium,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 1)
+                        .padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    val color = if (selected) MaterialTheme.colorScheme.primary else t.textDim
+                    Icon(tab.icon, tab.label, tint = color)
+                    Spacer(Modifier.height(2.dp))
+                    Text(tab.label, color = color, style = labelStyle.copy(fontSize = labelSize), maxLines = 1, softWrap = false,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                }
             }
         }
     }
