@@ -164,7 +164,7 @@ class UiSmokeTest {
     @Config(qualifiers = "w320dp-h700dp-xhdpi")
     @Test fun appearanceNarrow() {
         shoot("8b-appearance-narrow", open = "appearance")
-        compose.onNodeWithText("Accent").performScrollTo()
+        compose.onNodeWithText("Terminal text", substring = true).performScrollTo()  // past the accents, clear of the tab bar
         snap("8c-appearance-narrow-accents")
     }
     @Test fun editCluster() = shoot("9-add-cluster", open = Routes.editCluster())
