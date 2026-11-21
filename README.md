@@ -44,13 +44,13 @@ On any node:
 
 ```sh
 pveum user add pocketlab@pve
-pveum acl modify / -user pocketlab@pve -role PVEAuditor
-pveum role add PocketlabPower -privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback"
-pveum acl modify /vms -user pocketlab@pve -role PocketlabPower
+pveum acl modify / --users pocketlab@pve --roles PVEAuditor
+pveum role add PocketlabPower --privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback"
+pveum acl modify /vms --users pocketlab@pve --roles PocketlabPower
 pveum user token add pocketlab@pve phone --privsep 0
 ```
 
-Use `pocketlab@pve!phone` as the token ID and the printed secret. Skip the `PocketlabPower` lines for a read-only token.
+`phone` is the token name: pick one per device (`tablet`, `pixel8`…) so you can revoke one device without the others. In the app you only enter that name (the token ID becomes `pocketlab@pve!<name>`) and the printed secret; the app's **First time?** section gives you these commands with your token name filled in. Skip the `PocketlabPower` lines for a read-only token. Revoke a token in Proxmox under Datacenter → Permissions → API Tokens. To use another user or an existing token, tap **Use a different user or token** and enter the full ID.
 
 ### SSH
 
@@ -86,7 +86,7 @@ Keep that keystore. Android only installs an update over an existing install if 
 
 ### CI and releases (GitHub Actions)
 
-- **Every PR / push to `main`** (`.github/workflows/android.yml`): unit tests + an R8 release build. The APKs are attached to the run as an artifact, signed with a throwaway debug key: good for trying a PR, but they won't update over a real install.
+- **Every PR / push to `main`** (`.github/workflows/android.yml`): unit tests + the `dev` build, which is the release build (same R8 shrinking) under its own app ID, `dev.pocketlab.dev`, named **Pocketlab Dev**. It installs next to the real app with its own settings, so you can try a PR without touching your real install: open the run → Artifacts → `pocketlab-dev-N` → unzip → install the `arm64-v8a` APK. Dev builds are signed with the release key when the secrets are available, so each one updates the last. Dependabot PRs get no secrets, so theirs are debug-signed (uninstall Pocketlab Dev first).
 - **Tag `vX.Y.Z` on `main`** (`.github/workflows/release.yml`): tests, builds APKs signed with your release key, refuses to publish anything debug-signed, and creates a GitHub Release with the APKs and `SHA256SUMS.txt`. The version name comes from the tag; the version code is `X*1000000 + Y*1000 + Z`, so every tag must be higher than the last.
 
 Release secrets (Settings → Secrets and variables → Actions): `KEYSTORE_BASE64` (`base64 -w0 pocketlab-release.jks`), `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.

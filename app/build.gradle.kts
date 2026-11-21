@@ -47,6 +47,14 @@ android {
             }
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
+        // What CI builds for every PR: the release build (same R8 shrinking) under its own app ID,
+        // "Pocketlab Dev" (src/dev/res), so it installs next to the real app with separate settings.
+        create("dev") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            matchingFallbacks += listOf("release")
+        }
     }
 
     compileOptions {

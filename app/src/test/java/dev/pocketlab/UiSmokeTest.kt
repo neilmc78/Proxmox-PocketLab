@@ -7,6 +7,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import dev.pocketlab.data.Appearance
 import dev.pocketlab.data.AppConfig
@@ -94,6 +97,10 @@ class UiSmokeTest {
             val cfg by lab.store.config.collectAsStateWithLifecycle()
             PocketlabTheme(cfg.appearance) { PocketlabRoot(startRoute = start, poll = false, openRoute = open) }
         }
+        snap(name)
+    }
+
+    private fun snap(name: String) {
         compose.waitForIdle()
         val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
         File(outDir, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -157,6 +164,45 @@ class UiSmokeTest {
     @Test fun editHost() = shoot("10-add-host", open = Routes.editHost())
     @Test fun keys() = shoot("11-keys", open = "keys")
     @Test fun logs() = shoot("15-logs", open = Routes.logs("h1", "9b24f266c05f00"))
+    @Test fun secretRevealAndCopyCommands() {
+        shoot("16-edit-cluster", open = Routes.editCluster("c1"))
+        compose.onNodeWithContentDescription("Show API token secret").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Hide API token secret").assertExists()
+        // Token name drives both the token ID and the copied commands; shell-unsafe characters are dropped.
+        compose.onNodeWithText("Token name").performTextReplacement("tab let;rm -rf")
+        compose.waitForIdle()
+        compose.onNodeWithText("API token ID: pocketlab@pve!tabletrm-rf", substring = true).assertExists()
+        compose.onNodeWithText("First time?", substring = true).performScrollTo().performClick()
+        compose.waitForIdle()
+        snap("16b-edit-cluster-setup-open")
+        compose.onNodeWithText("Copy commands", substring = true).performScrollTo().performClick()
+        compose.waitForIdle()
+        val ctx = org.robolectric.RuntimeEnvironment.getApplication()
+        val clip = (ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClip
+        val copied = clip?.getItemAt(0)?.text?.toString()
+        org.junit.Assert.assertEquals(dev.pocketlab.ui.screens.pveTokenSetup("pocketlab@pve", "tabletrm-rf"), copied)
+        assertTrue(copied!!.endsWith("pveum user token add pocketlab@pve tabletrm-rf --privsep 0"))
+    }
+
+    @Test fun customTokenId() {
+        shoot("17a-edit-cluster", open = Routes.editCluster("c1"))
+        compose.onNodeWithText("Use a different user or token").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("API token ID").performTextReplacement("root@pam!tab let;")
+        compose.onNodeWithText("First time?", substring = true).performScrollTo().performClick()
+        snap("17-edit-cluster-custom")
+        compose.onNodeWithText("Copy commands", substring = true).performScrollTo().performClick()
+        compose.waitForIdle()
+        val clip = (org.robolectric.RuntimeEnvironment.getApplication().getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager).primaryClip?.getItemAt(0)?.text?.toString()!!
+        // Username in every line, token name in the last; no "user add" for a @pam user.
+        org.junit.Assert.assertEquals(dev.pocketlab.ui.screens.pveTokenSetup("root@pam", "tablet"), clip)
+        assertTrue(clip.endsWith("pveum user token add root@pam tablet --privsep 0"))
+        assertTrue(clip.contains("--users root@pam --roles PVEAuditor"))
+        assertTrue(!clip.contains("user add"))
+    }
+
     @Test fun node() = shoot("12-node", open = Routes.node("c1", "pve2"))
 
     @Test fun guestPowerSheetAndConfirm() {

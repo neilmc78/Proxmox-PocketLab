@@ -1,5 +1,8 @@
 package dev.pocketlab.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +16,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -32,9 +42,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.pocketlab.data.ProxmoxCluster
@@ -69,6 +81,70 @@ val SecretKeyboard = KeyboardOptions(keyboardType = KeyboardType.Password, autoC
 /** For pasted key material: no learning, no autocorrect, no "smart" punctuation. */
 val RawTextKeyboard = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false)
 
+/** Hidden by default; the eye icon shows what was typed. Screenshots stay blocked either way (FLAG_SECURE). */
+@Composable
+fun SecretField(value: String, onValueChange: (String) -> Unit, label: String, modifier: Modifier = Modifier.fillMaxWidth(),
+                placeholder: String? = null) {
+    var shown by remember { mutableStateOf(false) }
+    OutlinedTextField(value, onValueChange, modifier, label = { Text(label) }, singleLine = true,
+        placeholder = placeholder?.let { { Text(it) } },
+        visualTransformation = if (shown) VisualTransformation.None else PasswordVisualTransformation(),
+        keyboardOptions = SecretKeyboard,
+        trailingIcon = {
+            IconButton(onClick = { shown = !shown }) {
+                Icon(if (shown) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, if (shown) "Hide $label" else "Show $label")
+            }
+        })
+}
+
+/** The user Pocketlab's setup commands create. Other users/tokens can still be entered by hand. */
+const val PVE_USER = "pocketlab@pve"
+
+/** Proxmox's rule for token names. Also keeps the copied shell commands free of anything but these characters. */
+val PVE_TOKEN_NAME = Regex("[A-Za-z][A-Za-z0-9._-]+")
+private val PVE_USERID = Regex("[A-Za-z0-9._-]+@[A-Za-z0-9._-]+")
+
+fun cleanTokenName(s: String) = s.filter { (it in 'a'..'z') || (it in 'A'..'Z') || (it in '0'..'9') || it in "._-" }.take(40)
+/** Same characters plus the '@' and '!' of a full token ID. */
+fun cleanTokenId(s: String) = s.filter { (it in 'a'..'z') || (it in 'A'..'Z') || (it in '0'..'9') || it in "._-@!" }.take(100)
+
+/** "user@realm!token" -> (user@realm, token), or null if it isn't a valid Proxmox token ID. */
+fun splitTokenId(id: String): Pair<String, String>? {
+    val parts = id.trim().split('!')
+    if (parts.size != 2 || !PVE_USERID.matches(parts[0]) || !PVE_TOKEN_NAME.matches(parts[1])) return null
+    return parts[0] to parts[1]
+}
+
+/**
+ * Commands to run on a Proxmox node to set up [user] with a least-privilege role and an API token
+ * called [tokenName]. Only @pve users are created here; others (e.g. @pam) must already exist.
+ * Callers pass validated values, so only [PVE_USERID]/[PVE_TOKEN_NAME] characters reach the shell.
+ */
+fun pveTokenSetup(user: String, tokenName: String) = buildList {
+    if (user.endsWith("@pve")) add("pveum user add $user")
+    add("pveum acl modify / --users $user --roles PVEAuditor")
+    add("pveum role add PocketlabPower --privs \"VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback\"")
+    add("pveum acl modify /vms --users $user --roles PocketlabPower")
+    add("pveum user token add $user $tokenName --privsep 0")
+}.joinToString("\n")
+
+/** Selectable monospace block with a copy button (the screen is FLAG_SECURE, so it can't be screenshotted). */
+@Composable
+fun CopyableCode(code: String, clipLabel: String, button: String = "Copy commands") {
+    val ctx = LocalContext.current
+    val snackbar = LocalSnackbar.current
+    val scope = rememberCoroutineScope()
+    Column(Modifier.fillMaxWidth()) {
+        SelectionContainer(Modifier.horizontalScroll(rememberScrollState())) {
+            Text(code, fontFamily = FontFamily.Monospace, fontSize = 11.sp, softWrap = false)
+        }
+        OutlinedButton(onClick = {
+            (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(clipLabel, code))
+            scope.launch { snackbar.showSnackbar("Copied") }
+        }) { Icon(Icons.Outlined.ContentCopy, null); Text("  $button") }
+    }
+}
+
 @Composable
 private fun Help(text: String) = Text(text, style = MaterialTheme.typography.bodySmall, color = LocalTones.current.textDim)
 
@@ -80,7 +156,15 @@ fun EditClusterScreen(id: String?) {
     val existing = labConfig().clusters.firstOrNull { it.id == id }
     var name by remember { mutableStateOf(existing?.name ?: "") }
     var url by remember { mutableStateOf(existing?.baseUrl ?: "https://") }
-    var tokenId by remember { mutableStateOf(existing?.tokenId ?: "") }
+    // Default: the pocketlab@pve user from the setup commands, so only the token name is asked for.
+    // "Use a different user or token" switches to a free-form token ID for existing tokens.
+    val simpleName = existing?.tokenId?.removePrefix("$PVE_USER!")?.takeIf { existing.tokenId.startsWith("$PVE_USER!") }
+    var custom by remember { mutableStateOf(existing != null && simpleName == null) }
+    var tokenName by remember { mutableStateOf(simpleName ?: "phone") }
+    var customId by remember { mutableStateOf(existing?.tokenId ?: "") }
+    var showSetup by remember { mutableStateOf(false) }
+    fun tokenId() = if (custom) customId.trim() else "$PVE_USER!$tokenName"
+    fun tokenIdValid() = splitTokenId(tokenId()) != null
     var secret by remember { mutableStateOf(existing?.tokenSecret ?: "") }
     var pin by remember { mutableStateOf(existing?.pinnedCertSha256) }
     var busy by remember { mutableStateOf(false) }
@@ -101,7 +185,7 @@ fun EditClusterScreen(id: String?) {
         if (existing != null && pin == existing.pinnedCertSha256 && existing.baseUrl != normalizedUrl()) null else pin
 
     fun build() = ProxmoxCluster(id = existing?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim().ifBlank { "Proxmox" },
-        baseUrl = normalizedUrl(), tokenId = tokenId.trim(), tokenSecret = secret.trim(), pinnedCertSha256 = effectivePin())
+        baseUrl = normalizedUrl(), tokenId = tokenId(), tokenSecret = secret.trim(), pinnedCertSha256 = effectivePin())
 
     fun testAndSave() = scope.launch {
         busy = true; error = null
@@ -122,22 +206,44 @@ fun EditClusterScreen(id: String?) {
         OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Name") }, singleLine = true, placeholder = { Text("homelab") })
         OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth(), label = { Text("Address") }, singleLine = true,
             placeholder = { Text("https://192.168.1.10:8006") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-        Help("Any one node of the cluster. Port 8006 is added if you leave it out.")
-        OutlinedTextField(tokenId, { tokenId = it }, Modifier.fillMaxWidth(), label = { Text("API token ID") }, singleLine = true,
-            placeholder = { Text("pocketlab@pve!phone") })
-        OutlinedTextField(secret, { secret = it }, Modifier.fillMaxWidth(), label = { Text("API token secret") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(), placeholder = { Text("xxxxxxxx-xxxx-…") },
-            keyboardOptions = SecretKeyboard)
-        Help("Create a dedicated user and token on a node shell, e.g.:")
-        Text("""pveum user add pocketlab@pve
-pveum acl modify / -user pocketlab@pve -role PVEAuditor
-pveum role add PocketlabPower -privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback"
-pveum acl modify /vms -user pocketlab@pve -role PocketlabPower
-pveum user token add pocketlab@pve phone --privsep 0""", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-        Help("Read-only is enough to browse; power and snapshot buttons need the second role. Revoke the token in Proxmox any time.")
+        Help("Any node of the cluster. :8006 is added if missing.")
+        if (!custom) {
+            OutlinedTextField(tokenName, { tokenName = cleanTokenName(it) }, Modifier.fillMaxWidth(), label = { Text("Token name") }, singleLine = true,
+                isError = tokenName.isNotEmpty() && !tokenIdValid(), keyboardOptions = RawTextKeyboard,
+                supportingText = { Text("API token ID: ${tokenId()} · one token per device") })
+        } else {
+            OutlinedTextField(customId, { customId = cleanTokenId(it) }, Modifier.fillMaxWidth(), label = { Text("API token ID") }, singleLine = true,
+                placeholder = { Text("root@pam!tablet") }, keyboardOptions = RawTextKeyboard,
+                isError = customId.isNotBlank() && !tokenIdValid(),
+                supportingText = { Text("Username with its realm (@pve, @pam…), then !, then the token/device name") })
+        }
+        SecretField(secret, { secret = it }, "API token secret", placeholder = "xxxxxxxx-xxxx-…")
+        // Both links in one tight column: as separate items each got the form's 12dp gap on top of
+        // the buttons' own 48dp touch height, leaving a large hole between them.
+        Column {
+            TextButton(onClick = {
+                if (custom) { splitTokenId(customId)?.takeIf { it.first == PVE_USER }?.let { tokenName = it.second }; custom = false }
+                else { customId = tokenId(); custom = true }
+            }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                Text(if (custom) "Use the $PVE_USER user instead" else "Use a different user or token")
+            }
+            TextButton(onClick = { showSetup = !showSetup }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                Text(if (showSetup) "▾ Create the token on Proxmox" else "▸ First time? Create the token on Proxmox")
+            }
+        }
+        if (showSetup) {
+            val parts = splitTokenId(tokenId())
+            if (parts == null) Help(if (custom) "Enter a valid API token ID above to get the commands." else "Enter a token name above to get the commands.")
+            else {
+                Help("Proxmox web UI → your node → Shell. Paste and run; the last line prints the secret (shown once). For read-only, skip the two PocketlabPower lines. Already set up on another device? Only the last line is needed.")
+                CopyableCode(pveTokenSetup(parts.first, parts.second), "Proxmox token setup")
+                Help("Revoke any time: Datacenter → Permissions → API Tokens → Remove.")
+                Text("Then paste the secret into API token secret above and tap Test and save.", style = MaterialTheme.typography.bodySmall)
+            }
+        }
         if (pin != null) Help("Pinned certificate: $pin")
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Button(onClick = { testAndSave() }, enabled = !busy && tokenId.contains('!') && secret.isNotBlank() && url.length > 8, modifier = Modifier.fillMaxWidth()) {
+        Button(onClick = { testAndSave() }, enabled = !busy && tokenIdValid() && secret.isNotBlank() && url.length > 8, modifier = Modifier.fillMaxWidth()) {
             if (busy) CircularProgressIndicator(Modifier.height(18.dp), strokeWidth = 2.dp) else Text("Test and save")
         }
         if (existing != null) TextButton(onClick = { confirmDelete = true }, Modifier.fillMaxWidth()) { Text("Remove cluster", color = MaterialTheme.colorScheme.error) }
@@ -151,7 +257,7 @@ pveum user token add pocketlab@pve phone --privsep 0""", fontFamily = FontFamily
             onTrust = { pin = fp; testAndSave() }, onDismiss = { trust = null })
     }
     if (confirmDelete && existing != null) AlertDialog(onDismissRequest = { confirmDelete = false },
-        title = { Text("Remove ${existing.name}?") }, text = { Text("This only removes it from Pocketlab. Revoke the API token in Proxmox too.") },
+        title = { Text("Remove ${existing.name}?") }, text = { Text("This only removes it from Pocketlab. Also revoke the token in Proxmox: Datacenter → Permissions → API Tokens → ${existing.tokenId} → Remove.") },
         confirmButton = { TextButton(onClick = {
             lab.store.update { c -> c.copy(clusters = c.clusters.filterNot { it.id == existing.id }) }
             scope.launch { lab.refresh() }
@@ -230,8 +336,7 @@ fun EditHostScreen(id: String?) {
             FilterChip(auth == SshAuthType.PASSWORD, { auth = SshAuthType.PASSWORD }, label = { Text("Password") })
         }
         if (auth == SshAuthType.PASSWORD) {
-            OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Password") }, singleLine = true,
-                visualTransformation = PasswordVisualTransformation(), keyboardOptions = SecretKeyboard)
+            SecretField(password, { password = it }, "Password")
         } else {
             if (cfg.keys.isEmpty()) Help("No keys yet.")
             cfg.keys.forEach { k ->
