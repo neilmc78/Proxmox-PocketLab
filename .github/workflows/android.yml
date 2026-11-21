@@ -68,6 +68,16 @@ jobs:
         if: always()
         run: rm -f keystore.properties "$RUNNER_TEMP/release.jks"
 
+      # The app blocks screenshots (FLAG_SECURE), so these test renders are how a PR's UI gets reviewed.
+      - name: Upload UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshots-${{ github.run_number }}
+          path: app/build/screens/*.png
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7

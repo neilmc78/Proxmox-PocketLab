@@ -97,6 +97,10 @@ class UiSmokeTest {
             val cfg by lab.store.config.collectAsStateWithLifecycle()
             PocketlabTheme(cfg.appearance) { PocketlabRoot(startRoute = start, poll = false, openRoute = open) }
         }
+        snap(name)
+    }
+
+    private fun snap(name: String) {
         compose.waitForIdle()
         val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
         File(outDir, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -171,6 +175,7 @@ class UiSmokeTest {
         compose.onNodeWithText("API token ID: pocketlab@pve!tabletrm-rf", substring = true).assertExists()
         compose.onNodeWithText("First time?", substring = true).performClick()
         compose.waitForIdle()
+        snap("16b-edit-cluster-setup-open")
         compose.onNodeWithText("Copy commands", substring = true).performScrollTo().performClick()
         compose.waitForIdle()
         val ctx = org.robolectric.RuntimeEnvironment.getApplication()
