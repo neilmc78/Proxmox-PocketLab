@@ -19,8 +19,9 @@ android {
         applicationId = "dev.pocketlab"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        // CI passes these from the release tag (v1.2.3 -> name 1.2.3, code 1002003). Local builds use the defaults.
+        versionCode = (findProperty("appVersionCode") as String?)?.toInt() ?: 2
+        versionName = (findProperty("appVersionName") as String?) ?: "0.2.0"
     }
 
     signingConfigs {
@@ -39,6 +40,11 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Tagged release builds pass -PrequireReleaseSigning: never ship an APK signed with a throwaway
+            // debug key, because Android refuses to update an install signed with a different key.
+            if (keystoreProps.isEmpty() && findProperty("requireReleaseSigning") != null) {
+                throw GradleException("requireReleaseSigning is set but keystore.properties is missing")
+            }
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }

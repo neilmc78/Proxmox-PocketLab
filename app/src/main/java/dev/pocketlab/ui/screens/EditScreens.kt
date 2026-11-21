@@ -131,7 +131,7 @@ fun EditClusterScreen(id: String?) {
         Help("Create a dedicated user and token on a node shell, e.g.:")
         Text("""pveum user add pocketlab@pve
 pveum acl modify / -user pocketlab@pve -role PVEAuditor
-pveum role add PocketlabPower -privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback VM.Console"
+pveum role add PocketlabPower -privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback"
 pveum acl modify /vms -user pocketlab@pve -role PocketlabPower
 pveum user token add pocketlab@pve phone --privsep 0""", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
         Help("Read-only is enough to browse; power and snapshot buttons need the second role. Revoke the token in Proxmox any time.")
