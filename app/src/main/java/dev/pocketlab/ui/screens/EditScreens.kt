@@ -218,14 +218,18 @@ fun EditClusterScreen(id: String?) {
                 supportingText = { Text("Username with its realm (@pve, @pam…), then !, then the token/device name") })
         }
         SecretField(secret, { secret = it }, "API token secret", placeholder = "xxxxxxxx-xxxx-…")
-        TextButton(onClick = {
-            if (custom) { splitTokenId(customId)?.takeIf { it.first == PVE_USER }?.let { tokenName = it.second }; custom = false }
-            else { customId = tokenId(); custom = true }
-        }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-            Text(if (custom) "Use the $PVE_USER user instead" else "Use a different user or token")
-        }
-        TextButton(onClick = { showSetup = !showSetup }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-            Text(if (showSetup) "▾ Create the token on Proxmox" else "▸ First time? Create the token on Proxmox")
+        // Both links in one tight column: as separate items each got the form's 12dp gap on top of
+        // the buttons' own 48dp touch height, leaving a large hole between them.
+        Column {
+            TextButton(onClick = {
+                if (custom) { splitTokenId(customId)?.takeIf { it.first == PVE_USER }?.let { tokenName = it.second }; custom = false }
+                else { customId = tokenId(); custom = true }
+            }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                Text(if (custom) "Use the $PVE_USER user instead" else "Use a different user or token")
+            }
+            TextButton(onClick = { showSetup = !showSetup }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                Text(if (showSetup) "▾ Create the token on Proxmox" else "▸ First time? Create the token on Proxmox")
+            }
         }
         if (showSetup) {
             val parts = splitTokenId(tokenId())
