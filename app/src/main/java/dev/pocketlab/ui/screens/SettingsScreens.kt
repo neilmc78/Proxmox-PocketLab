@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -146,12 +147,16 @@ fun AppearanceScreen() {
                     }
                     Spacer(Modifier.height(14.dp))
                     Header("Accent", a.accent)
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // Each swatch gets an equal share of the row, capped at 44dp and kept square: fixed 44dp
+                    // circles overflowed narrow phones and the last one was squeezed into a pill.
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Accents.forEach { (name, color) ->
-                            Box(Modifier.size(44.dp).clip(CircleShape).background(color)
-                                .border(if (a.accent == name) 3.dp else 0.dp, t.text, CircleShape)
-                                .clickable { set { it.copy(accent = name) } }, contentAlignment = Alignment.Center) {
-                                if (a.accent == name) Icon(Icons.Outlined.Check, name, tint = Color.White)
+                            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                Box(Modifier.widthIn(max = 44.dp).fillMaxWidth().aspectRatio(1f).clip(CircleShape).background(color)
+                                    .border(if (a.accent == name) 3.dp else 0.dp, t.text, CircleShape)
+                                    .clickable { set { it.copy(accent = name) } }, contentAlignment = Alignment.Center) {
+                                    if (a.accent == name) Icon(Icons.Outlined.Check, name, tint = Color.White)
+                                }
                             }
                         }
                     }
