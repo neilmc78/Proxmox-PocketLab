@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -190,8 +191,11 @@ private fun BottomBar(nav: NavHostController, route: String) {
                 val color = if (selected) MaterialTheme.colorScheme.primary else t.textDim
                 Icon(tab.icon, tab.label, tint = color)
                 Spacer(Modifier.height(2.dp))
-                Text(tab.label, color = color, style = MaterialTheme.typography.labelMedium,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 1)
+                // Shrinks to fit instead of clipping ("Overview", "Workloads") on narrow phones.
+                val labelStyle = MaterialTheme.typography.labelMedium
+                androidx.compose.foundation.text.BasicText(tab.label, maxLines = 1,
+                    style = labelStyle.copy(color = color, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal),
+                    autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = labelStyle.fontSize))
             }
         }
     }

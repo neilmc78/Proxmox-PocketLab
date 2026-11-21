@@ -126,7 +126,8 @@ fun AppearanceScreen() {
                             val preview = Palettes.first { it.name == a.theme }
                             Choice(m.name.lowercase().replaceFirstChar { it.uppercase() }, a.mode == m, Modifier.weight(1f), onClick = { set { it.copy(mode = m) } }) {
                                 when (m) {
-                                    ThemeMode.SYSTEM -> Row { Preview(preview.light, Modifier.weight(1f)); Preview(preview.dark, Modifier.weight(1f)) }
+                                    // Two half-width previews: half the ratio each, so the card is as tall as Light and Dark.
+                                    ThemeMode.SYSTEM -> Row { Preview(preview.light, Modifier.weight(1f), ratio = 0.75f); Preview(preview.dark, Modifier.weight(1f), ratio = 0.75f) }
                                     ThemeMode.LIGHT -> Preview(preview.light, Modifier.fillMaxWidth())
                                     ThemeMode.DARK -> Preview(preview.dark, Modifier.fillMaxWidth())
                                 }
@@ -195,8 +196,8 @@ private fun Choice(label: String, selected: Boolean, modifier: Modifier, onClick
 }
 
 @Composable
-private fun Preview(tones: Tones, modifier: Modifier, swatch: Boolean = false) {
-    Column(modifier.aspectRatio(1.5f).clip(RoundedCornerShape(12.dp)).background(tones.surface).padding(10.dp),
+private fun Preview(tones: Tones, modifier: Modifier, swatch: Boolean = false, ratio: Float = 1.5f) {
+    Column(modifier.aspectRatio(ratio).clip(RoundedCornerShape(12.dp)).background(tones.surface).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)) {
         val colors = if (swatch) tones.swatch else listOf(tones.text, tones.textDim, tones.swatch.last())
         colors.forEachIndexed { i, c ->
