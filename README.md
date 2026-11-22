@@ -45,7 +45,7 @@ On any node:
 ```sh
 pveum user add pocketlab@pve
 pveum acl modify / --users pocketlab@pve --roles PVEAuditor
-pveum role add PocketlabPower --privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback"
+pveum role add PocketlabPower --privs "VM.Audit VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback"
 pveum acl modify /vms --users pocketlab@pve --roles PocketlabPower
 pveum user token add pocketlab@pve phone --privsep 0
 ```
@@ -54,11 +54,13 @@ pveum user token add pocketlab@pve phone --privsep 0
 
 ### SSH
 
+**Settings → How to set up** walks through all of this on one screen.
+
 In **Settings → SSH keys → Generate Ed25519**, copy the public key into `~/.ssh/authorized_keys` on each host, then add the host.
 
-- Name an SSH host after its Proxmox node, or pick the node in "Proxmox node", to get node shells and VM/LXC consoles. With more than one cluster, pick the node chip so the link includes the cluster: Pocketlab won't guess between two nodes that share a name.
-- Name it after a VM to get "SSH into the VM" from that VM's Connect button.
-- Docker needs the user in the `docker` group, or turn on "Use sudo for docker" (needs passwordless sudo for docker).
+- Add each Proxmox node as an SSH host to get the node shell and a console for every VM and LXC. The "Proxmox node" choice is picked for you when the name or address matches; with more than one cluster, check it's the right one: Pocketlab won't guess between two nodes that share a name.
+- **Docker in an LXC:** open the LXC and turn on "Docker in this container". Pocketlab runs Docker inside it through the node's SSH host (`pct exec`), so the LXC needs no SSH server or key.
+- **Docker in a VM:** add the VM as its own SSH host, named like the VM, with Docker on. Docker needs the user in the `docker` group, or turn on "Use sudo for docker" (passwordless sudo for docker). Naming it after the VM also gives "SSH into the VM" on its Connect button.
 
 ## Build
 

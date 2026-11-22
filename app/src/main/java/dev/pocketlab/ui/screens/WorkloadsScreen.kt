@@ -68,13 +68,13 @@ fun WorkloadsScreen(initialFilter: String) {
                 shape = RoundedCornerShape(16.dp),
             )
             Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("All", "VM", "LXC", "Container").forEach { f ->
+                listOf("All", "VM", "LXC", "Docker").forEach { f ->
                     FilterChip(selected = filter == f, onClick = { filter = f }, label = { Text(f) })
                 }
             }
         }
 
-        if (filter != "Container") cfg.clusters.forEach { cl ->
+        if (filter != "Docker") cfg.clusters.forEach { cl ->
             val st = snap.clusters[cl.id] ?: return@forEach
             val visible = st.guests.filter(::guestMatches)
             item(key = "cl-${cl.id}") {
@@ -86,6 +86,9 @@ fun WorkloadsScreen(initialFilter: String) {
                 Text("Proxmox · ${cl.baseUrl.removePrefix("https://").substringBefore('/')}", color = t.textDim,
                     style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(bottom = 10.dp))
                 if (st.error != null) ErrorCard(st.error, "Fix" to { nav.navigate(Routes.editCluster(cl.id)) })
+                // Nodes visible but no guests at all almost always means the token lacks VM.Audit on /vms.
+                else if (st.loaded && st.nodes.isNotEmpty() && st.guests.isEmpty())
+                    ErrorCard(noGuestsHint(cl.tokenId))
             }
             st.nodes.forEach { node ->
                 val ng = visible.filter { it.node == node.name }
@@ -115,7 +118,7 @@ fun WorkloadsScreen(initialFilter: String) {
             }
         }
 
-        if (filter == "All" || filter == "Container") cfg.hosts.filter { it.dockerEnabled }.forEach { h ->
+        if (filter == "All" || filter == "Docker") cfg.allHosts().filter { it.dockerEnabled }.forEach { h ->
             val st = snap.hosts[h.id] ?: return@forEach
             val cs = st.containers.filter { c ->
                 q.isEmpty() || c.name.lowercase().contains(q) || c.image.lowercase().contains(q) || (c.composeProject?.lowercase()?.contains(q) == true)
@@ -127,7 +130,7 @@ fun WorkloadsScreen(initialFilter: String) {
                     Spacer(Modifier.width(10.dp))
                     CountPill(cs.size)
                 }
-                Text("Docker · over SSH", color = t.textDim, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(bottom = 10.dp))
+                Text(if (h.pctVmid != null) "Docker · in LXC ${h.pctVmid}, via ${h.address}" else "Docker · over SSH", color = t.textDim, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(bottom = 10.dp))
                 (st.error ?: st.dockerError)?.let { ErrorCard(it) }
                 if (cs.isNotEmpty()) LabCard(Modifier.padding(bottom = 12.dp)) {
                     cs.forEachIndexed { i, c ->
@@ -142,6 +145,19 @@ fun WorkloadsScreen(initialFilter: String) {
             }
         }
     }
+}
+
+/**
+ * What to run when a token sees nodes but no guests. For the pocketlab@pve setup it's the missing
+ * VM.Audit in PocketlabPower (older setup commands left it out). For any other token: grant VM.Audit
+ * on /vms to the token itself if it has Privilege Separation (the web UI's default), else to its user.
+ */
+internal fun noGuestsHint(tokenId: String): String {
+    val base = "No VMs or containers visible. If this node has some, the API token can't see them: it needs VM.Audit on /vms. Fix in the node Shell: "
+    if (tokenId.startsWith("$PVE_USER!")) return base + "pveum role modify PocketlabPower --append 1 --privs VM.Audit"
+    val user = tokenId.substringBefore('!')
+    return base + "pveum acl modify /vms --tokens '$tokenId' --roles PVEAuditor " +
+        "(token made in the web UI with Privilege Separation), or pveum acl modify /vms --users '$user' --roles PVEAuditor (without it)."
 }
 
 @Composable

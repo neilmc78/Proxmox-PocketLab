@@ -38,9 +38,22 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 fun hostKeyFingerprint(key: PublicKey): String {
-    val blob = Buffer.PlainBuffer().putPublicKey(key).compactData
-    val sha = MessageDigest.getInstance("SHA-256").digest(blob)
+    val sha = MessageDigest.getInstance("SHA-256").digest(sshPublicKeyBlob(key))
     return "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(sha)
+}
+
+/**
+ * The key in SSH wire format, as `ssh-keygen -lf` hashes it. Ed25519 is built by hand when sshj
+ * doesn't recognise the key object (some providers name the algorithm differently): its blob is
+ * just "ssh-ed25519" plus the 32 raw key bytes, the tail of the X.509 encoding.
+ */
+internal fun sshPublicKeyBlob(key: PublicKey): ByteArray = try {
+    Buffer.PlainBuffer().putPublicKey(key).compactData
+} catch (e: UnsupportedOperationException) {
+    val enc = key.encoded
+    val ed25519Spki = byteArrayOf(0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70)
+    if (enc == null || enc.size != 44 || !enc.copyOfRange(0, 9).contentEquals(ed25519Spki)) throw e
+    Buffer.PlainBuffer().putString("ssh-ed25519").putBytes(enc.copyOfRange(12, 44)).compactData
 }
 
 /** The server's host key is unknown (first connect) or does not match what we pinned. */
@@ -99,7 +112,18 @@ object SshPool {
         }
         try {
             when (host.authType) {
-                SshAuthType.PASSWORD -> c.authPassword(host.username, host.password.orEmpty())
+                SshAuthType.PASSWORD, SshAuthType.PROMPT -> {
+                    // PROMPT hosts get the password typed just before connecting (never stored).
+                    val pw = host.password ?: throw IOException("${host.name} asks for its password each time; none was given")
+                    // "password" and keyboard-interactive: many servers (PAM) only offer the latter.
+                    val finder = object : net.schmizz.sshj.userauth.password.PasswordFinder {
+                        override fun reqPassword(resource: net.schmizz.sshj.userauth.password.Resource<*>?) = pw.toCharArray()
+                        override fun shouldRetry(resource: net.schmizz.sshj.userauth.password.Resource<*>?) = false
+                    }
+                    c.auth(host.username,
+                        net.schmizz.sshj.userauth.method.AuthPassword(finder),
+                        net.schmizz.sshj.userauth.method.AuthKeyboardInteractive(net.schmizz.sshj.userauth.method.PasswordResponseProvider(finder)))
+                }
                 SshAuthType.KEY -> {
                     val k = keys.firstOrNull { it.id == host.keyId } ?: throw IOException("No SSH key selected for ${host.name}")
                     val finder = k.passphrase?.takeIf { it.isNotEmpty() }?.let { PasswordUtils.createOneOff(it.toCharArray()) }
@@ -247,6 +271,68 @@ fun generateEd25519(comment: String): Pair<String, String> {
     val pubLine = "ssh-ed25519 " + Base64.getEncoder().encodeToString(pub) + " " + comment
     return pem to pubLine
 }
+
+/**
+ * Host and optional port from whatever was typed: strips a scheme ("http://", "ssh://"), a "user@",
+ * a path, and an IPv6 address's brackets; a trailing ":2222" becomes the port. Bare IPv6 stays whole.
+ */
+fun parseHostAddress(input: String): Pair<String, Int?> {
+    var s = input.trim().substringAfter("://")
+    s = s.substringAfterLast('@').substringBefore('/').trim()
+    if (s.startsWith("[")) {                                   // [fe80::1]:2222
+        val host = s.substringAfter('[').substringBefore(']')
+        return host to s.substringAfter("]:", "").toIntOrNull()?.takeIf { it in 1..65535 }
+    }
+    if (s.count { it == ':' } == 1) {                          // host:port (more colons = bare IPv6)
+        val port = s.substringAfter(':').toIntOrNull()?.takeIf { it in 1..65535 }
+        if (port != null) return s.substringBefore(':') to port
+    }
+    return s to null
+}
+
+/** Plain-language reason an SSH connect or login failed, with what to check. */
+fun sshErrorMessage(e: Throwable, host: String, port: Int): String {
+    var t: Throwable? = e
+    while (t != null) {
+        when (t) {
+            is java.net.UnknownHostException ->
+                return "Can't find \"$host\". Enter just the IP address or hostname, e.g. 192.168.1.10."
+            is java.net.ConnectException ->
+                return "Nothing accepted a connection on $host:$port. Check the address and port, and that SSH is running."
+            is java.net.SocketTimeoutException, is SshTimeoutException ->
+                return "No reply from $host:$port. Check the address, and that the phone is on the same network (or VPN)."
+            is java.net.NoRouteToHostException ->
+                return "Can't reach $host from this phone's network."
+            is net.schmizz.sshj.userauth.UserAuthException ->
+                return "Connected, but the login was refused. Check the username, and that the public key is in ~/.ssh/authorized_keys (or the password is right)."
+        }
+        t = t.cause
+    }
+    return e.message ?: e.javaClass.simpleName
+}
+
+/** Unix user names we'll install a key for (also keeps them out of any shell parsing). */
+val UNIX_USER = Regex("[a-z_][a-z0-9_.-]{0,31}")
+
+/**
+ * Command, run on a Proxmox node, that adds [publicKey] to [user]'s authorized_keys inside LXC [vmid]
+ * (via `pct exec`), creating ~/.ssh with the right modes and owner, and not adding it twice. The key
+ * works for that user only. Prints "no-sshd" if the container has no SSH server to log in to.
+ * User and key go in as positional arguments, never spliced into the script.
+ */
+fun lxcInstallKeyCommand(vmid: Int, user: String, publicKey: String, sudo: Boolean): String {
+    require(UNIX_USER.matches(user)) { "Not a valid user name: $user" }
+    return (if (sudo) "sudo -n " else "") + "pct exec $vmid -- sh -c ${shq(installKeyScript())} sh ${shq(user)} ${shq(publicKey.trim())}"
+}
+
+/** The script [lxcInstallKeyCommand] runs inside the container; `sh -c <script> sh <user> <key>`. */
+internal fun installKeyScript(passwd: String = "/etc/passwd") = "u=\"\$1\"; k=\"\$2\"; " +
+    "h=\$(awk -F: -v u=\"\$u\" '\$1==u {print \$6}' $passwd); " +
+    "[ -n \"\$h\" ] || { echo \"No user \$u in this container\" >&2; exit 3; }; " +
+    "mkdir -p \"\$h/.ssh\" && chmod 700 \"\$h/.ssh\" && touch \"\$h/.ssh/authorized_keys\" && chmod 600 \"\$h/.ssh/authorized_keys\" && " +
+    "{ grep -qxF \"\$k\" \"\$h/.ssh/authorized_keys\" || printf '%s\\n' \"\$k\" >> \"\$h/.ssh/authorized_keys\"; } && " +
+    "chown -R \"\$u\": \"\$h/.ssh\" || exit 4; " +
+    "command -v sshd >/dev/null 2>&1 || [ -x /usr/sbin/sshd ] || echo no-sshd"
 
 /** Quote a value for a POSIX shell. */
 fun shq(s: String) = "'" + s.replace("'", "'\\''") + "'"

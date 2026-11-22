@@ -30,7 +30,15 @@ data class Container(
 
 class DockerClient(private val host: SshHost, private val keys: List<SshKey>) {
     private val json = Json { ignoreUnknownKeys = true }
-    private val docker get() = if (host.dockerSudo) "sudo -n docker" else "docker"
+    /**
+     * The docker command on this host. For an LXC reached through its node it runs inside the
+     * container with `pct exec <vmid> --` (needs root on the node, so sudo for other users).
+     */
+    private val docker get() = when {
+        host.pctVmid != null -> (if (host.username == "root") "" else "sudo -n ") + "pct exec ${host.pctVmid} -- docker"
+        host.dockerSudo -> "sudo -n docker"
+        else -> "docker"
+    }
 
     suspend fun list(): List<Container> {
         val r = SshPool.exec(host, keys, "$docker ps -a --no-trunc --format '{{json .}}'")

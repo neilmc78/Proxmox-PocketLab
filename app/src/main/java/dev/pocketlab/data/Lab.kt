@@ -36,6 +36,8 @@ data class HostState(
     val dockerError: String? = null,
     val hostKey: HostKeyException? = null,
     val loaded: Boolean = false,
+    /** The host asks for its password each time, so it isn't polled (no stats, no Docker). */
+    val promptOnly: Boolean = false,
 )
 
 data class LabSnapshot(
@@ -54,7 +56,8 @@ class Lab(val store: SecureStore) {
     val config get() = store.config.value
 
     fun client(clusterId: String) = config.clusters.firstOrNull { it.id == clusterId }?.let(::ProxmoxClient)
-    fun host(hostId: String) = config.hosts.firstOrNull { it.id == hostId }
+    /** A stored SSH host, or an LXC Docker host made from one ([AppConfig.lxcDockerHosts]). */
+    fun host(hostId: String) = config.allHosts().firstOrNull { it.id == hostId }
     fun docker(hostId: String) = host(hostId)?.let { DockerClient(it, config.keys) }
 
     /** Bumped whenever a single target is refreshed, so an older full refresh doesn't overwrite it. */
@@ -74,7 +77,7 @@ class Lab(val store: SecureStore) {
             val started = HashMap(versions)
             coroutineScope {
                 val c = cfg.clusters.map { cl -> async { cl to loadCluster(cl) } }
-                val h = cfg.hosts.map { host -> async { host to loadHost(host, cfg.keys) } }
+                val h = cfg.allHosts().map { host -> async { host to loadHost(host, cfg.keys) } }
                 val clusters = c.awaitAll()
                 val hosts = h.awaitAll()
                 _snap.update { cur ->
@@ -87,7 +90,7 @@ class Lab(val store: SecureStore) {
                             val r = clusters.firstOrNull { it.first.id == cl.id }
                             cl.id to (if (r != null && r.first == cl && fresh(cl.id)) r.second else cur.clusters[cl.id] ?: ClusterState())
                         },
-                        hosts = now.hosts.associate { ho ->
+                        hosts = now.allHosts().associate { ho ->
                             val r = hosts.firstOrNull { it.first.id == ho.id }
                             ho.id to (if (r != null && r.first == ho && fresh(ho.id)) r.second else cur.hosts[ho.id] ?: HostState())
                         },
@@ -125,16 +128,19 @@ class Lab(val store: SecureStore) {
     }
 
     private suspend fun loadHost(h: SshHost, keys: List<SshKey>): HostState {
+        // A host that asks for its password each time can't be polled: it connects only when you open a shell.
+        if (h.authType == SshAuthType.PROMPT && h.password == null) return HostState(loaded = true, promptOnly = true)
         // Reachability is decided by connecting, not by whether the stats script parses.
         try {
             SshPool.client(h, keys)
         } catch (e: HostKeyException) {
             return HostState(error = e.message, hostKey = e, loaded = true)
         } catch (e: Exception) {
-            return HostState(error = e.message ?: e.javaClass.simpleName, loaded = true)
+            return HostState(error = dev.pocketlab.ssh.sshErrorMessage(e, h.address, h.port), loaded = true)
         }
         return coroutineScope {
-            val stats = async { runCatching { HostStatsProbe.probe(h, keys) }.getOrNull() }
+            // An LXC Docker host shares the node's connection; its own CPU/memory come from Proxmox.
+            val stats = async { if (h.pctVmid != null) null else runCatching { HostStatsProbe.probe(h, keys) }.getOrNull() }
             val docker = async {
                 if (!h.dockerEnabled) emptyList<Container>() to null
                 else try { DockerClient(h, keys).list() to null } catch (e: Exception) { emptyList<Container>() to (e.message ?: e.javaClass.simpleName) }

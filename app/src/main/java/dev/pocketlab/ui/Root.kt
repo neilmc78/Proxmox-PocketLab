@@ -35,8 +35,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +49,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -77,6 +82,8 @@ import kotlinx.coroutines.delay
 
 val LocalNav = staticCompositionLocalOf<NavHostController> { error("no nav") }
 val LocalSnackbar = staticCompositionLocalOf<SnackbarHostState> { error("no snackbar") }
+/** False in UI tests (PocketlabRoot(poll = false)): screens fetch once instead of polling forever. */
+val LocalLivePolling = staticCompositionLocalOf { true }
 
 object Routes {
     fun enc(s: String): String = Uri.encode(s)
@@ -86,7 +93,8 @@ object Routes {
     fun container(hostId: String, id: String) = "container/${enc(hostId)}/${enc(id)}"
     fun logs(hostId: String, id: String) = "logs/${enc(hostId)}/${enc(id)}"
     fun term(id: String) = "term/${enc(id)}"
-    fun editHost(id: String? = null) = "edit-host?id=${id?.let(::enc) ?: ""}"
+    fun editHost(id: String? = null, name: String = "", address: String = "", user: String = "", keyId: String = "") =
+        "edit-host?id=${id?.let(::enc) ?: ""}&name=${enc(name)}&addr=${enc(address)}&user=${enc(user)}&key=${enc(keyId)}"
     fun editCluster(id: String? = null) = "edit-cluster?id=${id?.let(::enc) ?: ""}"
     fun workloads(filter: String = "All") = "workloads?filter=$filter"
 }
@@ -123,8 +131,15 @@ fun PocketlabRoot(startRoute: String = "overview", poll: Boolean = true, openRou
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route.orEmpty()
     val showBar = !route.startsWith("term/") && !route.startsWith("edit-") && route != "keys"
+    // The highlighted tab is the one you're in: the last tab root you visited. Detail screens keep it,
+    // so a VM opened from Overview leaves Overview highlighted instead of jumping to Workloads.
+    // Held here (not in the bar) so it survives screens that hide the bar.
+    var lastTab by remember { mutableStateOf("overview") }
+    val tabHere = tabs.firstOrNull { route == it.route || route.startsWith(it.route + "?") }?.route
+    val currentTab = tabHere ?: lastTab
+    SideEffect { if (tabHere != null) lastTab = tabHere }
 
-    CompositionLocalProvider(LocalNav provides nav, LocalSnackbar provides snackbar) {
+    CompositionLocalProvider(LocalNav provides nav, LocalSnackbar provides snackbar, LocalLivePolling provides poll) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
             Column(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -137,6 +152,7 @@ fun PocketlabRoot(startRoute: String = "overview", poll: Boolean = true, openRou
                     composable("settings") { SettingsScreen() }
                     composable("appearance") { AppearanceScreen() }
                     composable("keys") { KeysScreen() }
+                    composable("guide") { dev.pocketlab.ui.screens.GuideScreen() }
                     composable("guest/{c}/{n}/{t}/{v}") {
                         val a = it.arguments!!
                         GuestScreen(a.getString("c")!!, a.getString("n")!!, a.getString("t")!!, a.getString("v")!!.toInt())
@@ -146,13 +162,18 @@ fun PocketlabRoot(startRoute: String = "overview", poll: Boolean = true, openRou
                     composable("container/{h}/{id}") { ContainerScreen(it.arguments!!.getString("h")!!, it.arguments!!.getString("id")!!) }
                     composable("logs/{h}/{id}") { LogsScreen(it.arguments!!.getString("h")!!, it.arguments!!.getString("id")!!) }
                     composable("term/{id}") { TermScreen(it.arguments!!.getString("id")!!) }
-                    composable("edit-host?id={id}") { EditHostScreen(it.arguments?.getString("id")?.ifBlank { null }) }
+                    composable("edit-host?id={id}&name={name}&addr={addr}&user={user}&key={key}") {
+                        val a = it.arguments
+                        EditHostScreen(a?.getString("id")?.ifBlank { null }, dev.pocketlab.ui.screens.HostPrefill(
+                            a?.getString("name").orEmpty(), a?.getString("addr").orEmpty(), a?.getString("user").orEmpty(), a?.getString("key").orEmpty()))
+                    }
                     composable("edit-cluster?id={id}") { EditClusterScreen(it.arguments?.getString("id")?.ifBlank { null }) }
                 }
-                if (showBar) BottomBar(nav, route)
+                if (showBar) BottomBar(nav, currentTab)
             }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 100.dp))
         }
+        dev.pocketlab.ui.screens.PasswordPromptDialog()
     }
 }
 
@@ -160,15 +181,9 @@ fun PocketlabRoot(startRoute: String = "overview", poll: Boolean = true, openRou
 private fun OverviewArg(filter: String?) = WorkloadsScreen(filter ?: "All")
 
 @Composable
-private fun BottomBar(nav: NavHostController, route: String) {
+private fun BottomBar(nav: NavHostController, current: String) {
     val t = LocalTones.current
-    val current = when {
-        route.startsWith("overview") -> "overview"
-        route.startsWith("hosts") || route.startsWith("host/") || route.startsWith("node/") -> "hosts"
-        route.startsWith("workloads") || route.startsWith("guest/") || route.startsWith("container/") || route.startsWith("logs/") -> "workloads"
-        route.startsWith("terminal") -> "terminal"
-        else -> "settings"
-    }
+
     // One label size for all tabs: the largest (up to labelMedium) at which the longest label fits a
     // tab's width, so narrow phones get slightly smaller labels instead of clipped ones.
     val labelStyle = MaterialTheme.typography.labelMedium
@@ -191,26 +206,29 @@ private fun BottomBar(nav: NavHostController, route: String) {
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             tabs.forEach { tab ->
-                val selected = tab.route == current
+                val isSelected = tab.route == current
                 Column(
                     Modifier.weight(1f).clip(RoundedCornerShape(30.dp))
-                        .background(if (selected) MaterialTheme.colorScheme.primaryContainer else t.surface)
+                        .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else t.surface)
+                        .semantics { selected = isSelected }
                         .clickable {
-                            if (tab.route == current) nav.popBackStack(tab.route, inclusive = false).let { ok -> if (!ok) nav.navigate(tab.route) }
+                            // A tab always opens its main page. No saved per-tab stacks: restoring them brought
+                            // back whatever detail screen you'd left (and "overview", the start destination,
+                            // restored another tab's stack).
+                            if (tab.route == "overview") nav.popBackStack("overview", inclusive = false)
                             else nav.navigate(tab.route) {
-                                popUpTo("overview") { saveState = true }
+                                popUpTo("overview")
                                 launchSingleTop = true
-                                restoreState = true
                             }
                         }
                         .padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    val color = if (selected) MaterialTheme.colorScheme.primary else t.textDim
+                    val color = if (isSelected) MaterialTheme.colorScheme.primary else t.textDim
                     Icon(tab.icon, tab.label, tint = color)
                     Spacer(Modifier.height(2.dp))
                     Text(tab.label, color = color, style = labelStyle.copy(fontSize = labelSize), maxLines = 1, softWrap = false,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
                 }
             }
         }

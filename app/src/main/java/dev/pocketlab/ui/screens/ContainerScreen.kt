@@ -60,7 +60,7 @@ fun ContainerScreen(hostId: String, id: String) {
     val snackbar = LocalSnackbar.current
     val t = LocalTones.current
     val scope = rememberCoroutineScope()
-    val host = labConfig().hosts.firstOrNull { it.id == hostId }
+    val host = labConfig().allHosts().firstOrNull { it.id == hostId }
     val c = labSnapshot().hosts[hostId]?.containers?.firstOrNull { it.id == id }
     var sheet by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<CAction?>(null) }

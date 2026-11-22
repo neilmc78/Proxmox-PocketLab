@@ -56,6 +56,8 @@ import dev.pocketlab.net.untrustedCert
 import dev.pocketlab.proxmox.ProxmoxClient
 import dev.pocketlab.ssh.HostKeyException
 import dev.pocketlab.ssh.SshPool
+import dev.pocketlab.ssh.parseHostAddress
+import dev.pocketlab.ssh.sshErrorMessage
 import dev.pocketlab.ui.LocalNav
 import dev.pocketlab.ui.LocalSnackbar
 import dev.pocketlab.ui.components.TopBar
@@ -123,7 +125,9 @@ fun splitTokenId(id: String): Pair<String, String>? {
 fun pveTokenSetup(user: String, tokenName: String) = buildList {
     if (user.endsWith("@pve")) add("pveum user add $user")
     add("pveum acl modify / --users $user --roles PVEAuditor")
-    add("pveum role add PocketlabPower --privs \"VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback\"")
+    // VM.Audit too: an ACL on /vms replaces (not adds to) the PVEAuditor role inherited from /, so
+    // without it the token can power VMs it can no longer see.
+    add("pveum role add PocketlabPower --privs \"VM.Audit VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback\"")
     add("pveum acl modify /vms --users $user --roles PocketlabPower")
     add("pveum user token add $user $tokenName --privsep 0")
 }.joinToString("\n")
@@ -266,24 +270,30 @@ fun EditClusterScreen(id: String?) {
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } })
 }
 
+/** Values to start a new SSH host with, e.g. from an LXC's "SSH into the LXC". */
+data class HostPrefill(val name: String = "", val address: String = "", val user: String = "", val keyId: String = "")
+
 @Composable
-fun EditHostScreen(id: String?) {
+fun EditHostScreen(id: String?, prefill: HostPrefill = HostPrefill()) {
     val nav = LocalNav.current
     val snackbar = LocalSnackbar.current
     val scope = rememberCoroutineScope()
     val cfg = labConfig()
     val existing = cfg.hosts.firstOrNull { it.id == id }
-    var name by remember { mutableStateOf(existing?.name ?: "") }
-    var address by remember { mutableStateOf(existing?.address ?: "") }
+    var name by remember { mutableStateOf(existing?.name ?: prefill.name) }
+    var address by remember { mutableStateOf(existing?.address ?: prefill.address) }
     var port by remember { mutableStateOf((existing?.port ?: 22).toString()) }
-    var user by remember { mutableStateOf(existing?.username ?: "root") }
+    var user by remember { mutableStateOf(existing?.username ?: prefill.user.ifBlank { "root" }) }
     var auth by remember { mutableStateOf(existing?.authType ?: if (cfg.keys.isEmpty()) SshAuthType.PASSWORD else SshAuthType.KEY) }
+    // For "ask each time" this holds the one-off password for Test and save; it's never stored.
     var password by remember { mutableStateOf(existing?.password ?: "") }
-    var keyId by remember { mutableStateOf(existing?.keyId ?: cfg.keys.firstOrNull()?.id) }
-    var docker by remember { mutableStateOf(existing?.dockerEnabled ?: true) }
+    var keyId by remember { mutableStateOf(existing?.keyId ?: prefill.keyId.ifBlank { null } ?: cfg.keys.firstOrNull()?.id) }
+    var dockerChoice by remember { mutableStateOf(existing?.dockerEnabled) }
     var dockerSudo by remember { mutableStateOf(existing?.dockerSudo ?: false) }
     var node by remember { mutableStateOf(existing?.proxmoxNode ?: "") }
     var nodeCluster by remember { mutableStateOf(existing?.proxmoxClusterId) }
+    // New hosts get the Proxmox node link picked for them until the user taps a chip.
+    var nodeTouched by remember { mutableStateOf(existing != null) }
     var fp by remember { mutableStateOf(existing?.hostKeyFingerprint) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -292,23 +302,46 @@ fun EditHostScreen(id: String?) {
     val clusterNames = cfg.clusters.associate { it.id to it.name }
     val knownNodes = labSnapshot().clusters.values.flatMap { it.nodes.map { n -> n.clusterId to n.name } }.distinct()
 
-    fun sameEndpoint() = existing != null && existing.address == address.trim() && existing.port == (port.toIntOrNull() ?: 22)
+    // Forgiving address: "http://10.0.0.5", "ssh://root@pve:2222/" and "pve:2222" all work.
+    fun parsed() = parseHostAddress(address)
+    fun hostAddr() = parsed().first
+    fun hostPort() = parsed().second ?: port.toIntOrNull() ?: 22
+    fun sameEndpoint() = existing != null && existing.address == hostAddr() && existing.port == hostPort()
     // A host key belongs to an address: a changed address/port means a fresh first-use check, not a MITM warning.
     fun effectiveFp(): String? = if (existing != null && fp == existing.hostKeyFingerprint && !sameEndpoint()) null else fp
 
+    /**
+     * The node this host most likely is: a unique node with the same name, or else the only node of a
+     * cluster added at this host's address. (cluster id, node name) or null.
+     */
+    fun autoNode(): Pair<String, String>? {
+        knownNodes.filter { it.second.equals(name.trim(), ignoreCase = true) }.singleOrNull()?.let { return it }
+        val addr = hostAddr().lowercase().ifBlank { return null }
+        val cl = cfg.clusters.firstOrNull { runCatching { java.net.URI(it.baseUrl).host?.lowercase() }.getOrNull() == addr } ?: return null
+        return knownNodes.filter { it.first == cl.id }.singleOrNull()
+    }
+    /** (cluster id, node name) this host is linked to, or null for "not a Proxmox node". */
+    fun linkedNode(): Pair<String?, String>? =
+        if (nodeTouched) node.takeIf { it.isNotBlank() }?.let { nodeCluster to it } else autoNode()
+
+    // Until the user flips it: off for a Proxmox node (Docker rarely runs on the hypervisor), on otherwise.
+    // "Ask each time" hosts aren't polled, so they can't list Docker.
+    fun docker() = auth != SshAuthType.PROMPT && (dockerChoice ?: (linkedNode() == null))
+
     fun build() = SshHost(
-        id = existing?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim().ifBlank { address.trim() },
-        address = address.trim(), port = port.toIntOrNull() ?: 22, username = user.trim(), authType = auth,
+        id = existing?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim().ifBlank { hostAddr() },
+        address = hostAddr(), port = hostPort(), username = user.trim(), authType = auth,
         password = password.takeIf { auth == SshAuthType.PASSWORD }, keyId = keyId.takeIf { auth == SshAuthType.KEY },
-        hostKeyFingerprint = effectiveFp(), dockerEnabled = docker, dockerSudo = dockerSudo, proxmoxNode = node.trim().ifBlank { null },
-        proxmoxClusterId = nodeCluster.takeIf { node.isNotBlank() },
+        hostKeyFingerprint = effectiveFp(), dockerEnabled = docker(), dockerSudo = dockerSudo,
+        proxmoxNode = linkedNode()?.second, proxmoxClusterId = linkedNode()?.first,
     )
 
     fun testAndSave() = scope.launch {
         busy = true; error = null
         val h = build()
         try {
-            withContext(Dispatchers.IO) { SshPool.open(h, lab.config.keys).close() }
+            val probe = if (auth == SshAuthType.PROMPT) h.copy(password = password) else h
+            withContext(Dispatchers.IO) { SshPool.open(probe, lab.config.keys).close() }
             lab.store.update { c -> c.copy(hosts = c.hosts.filterNot { it.id == h.id } + h) }
             SshPool.drop(h.id)
             lab.refreshHost(h.id)
@@ -317,16 +350,16 @@ fun EditHostScreen(id: String?) {
         } catch (e: HostKeyException) {
             trust = e
         } catch (e: Exception) {
-            error = e.message ?: e.javaClass.simpleName
+            error = sshErrorMessage(e, h.address, h.port)
         } finally { busy = false }
     }
 
     Form(if (existing == null) "Add SSH host" else "Edit ${existing.name}") {
         OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Name") }, singleLine = true)
-        Help("Name it like the Proxmox node or VM it is (e.g. pve1, docker-vm) and Pocketlab links them automatically.")
+        Help("For a VM or LXC, use its Proxmox name (e.g. docker-vm) so its Connect button finds this host.")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(address, { address = it }, Modifier.weight(1f), label = { Text("Address") }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
+                placeholder = { Text("192.168.1.10") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
             OutlinedTextField(port, { port = it.filter(Char::isDigit) }, Modifier.weight(0.35f), label = { Text("Port") }, singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
         }
@@ -334,9 +367,15 @@ fun EditHostScreen(id: String?) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(auth == SshAuthType.KEY, { auth = SshAuthType.KEY }, label = { Text("SSH key") })
             FilterChip(auth == SshAuthType.PASSWORD, { auth = SshAuthType.PASSWORD }, label = { Text("Password") })
+            FilterChip(auth == SshAuthType.PROMPT, { auth = SshAuthType.PROMPT }, label = { Text("Ask each time") })
         }
         if (auth == SshAuthType.PASSWORD) {
             SecretField(password, { password = it }, "Password")
+            Help("Saved encrypted on this phone, so the host can be polled for status and Docker.")
+        } else if (auth == SshAuthType.PROMPT) {
+            SecretField(password, { password = it }, "Password for this test (not saved)")
+            Help("No key, nothing saved: you're asked for the password each time, before the console opens. " +
+                "The host isn't polled in the background, so no status or Docker for it.")
         } else {
             if (cfg.keys.isEmpty()) Help("No keys yet.")
             cfg.keys.forEach { k ->
@@ -346,27 +385,37 @@ fun EditHostScreen(id: String?) {
             }
             OutlinedButton(onClick = { nav.navigate("keys") }) { Text("Manage keys (generate / import)") }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (auth != SshAuthType.PROMPT) Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("Docker"); Help("List containers on this host") }
-            Switch(docker, { docker = it })
+            Switch(docker(), { dockerChoice = it })
         }
-        if (docker) Row(verticalAlignment = Alignment.CenterVertically) {
+        if (docker()) Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("Use sudo for docker"); Help("Only if the user isn't in the docker group (needs passwordless sudo)") }
             Switch(dockerSudo, { dockerSudo = it })
         }
-        OutlinedTextField(node, { node = it; nodeCluster = null }, Modifier.fillMaxWidth(), label = { Text("Proxmox node (optional)") }, singleLine = true)
-        if (knownNodes.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            knownNodes.forEach { (cid, n) ->
-                val selected = node == n && nodeCluster == cid
-                val label = if (clusterNames.size > 1) "$n · ${clusterNames[cid]}" else n
-                FilterChip(selected, { if (selected) { node = ""; nodeCluster = null } else { node = n; nodeCluster = cid } }, label = { Text(label) })
+        // Which Proxmox node this host is, as a choice instead of a free-text field. A saved link to a
+        // node that isn't loaded right now (cluster offline) still shows as a chip.
+        val linked = linkedNode()
+        val choices = (knownNodes.map { it.first as String? to it.second } +
+            listOfNotNull(existing?.proxmoxNode?.let { existing.proxmoxClusterId to it })).distinct()
+        Text("Proxmox node")
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(linked == null, { nodeTouched = true; node = ""; nodeCluster = null }, label = { Text("None") })
+            choices.forEach { (cid, n) ->
+                val label = if (clusterNames.size > 1 && cid != null) "$n · ${clusterNames[cid]}" else n
+                FilterChip(linked == (cid to n), { nodeTouched = true; node = n; nodeCluster = cid }, label = { Text(label) })
             }
         }
-        Help("Set this if the host is a Proxmox node: enables node shells and VM/LXC consoles (qm terminal / pct enter).")
+        Help(when {
+            linked != null && !nodeTouched -> "Picked because ${if (linked.second.equals(name.trim(), true)) "the name matches" else "the address matches the cluster"}. Linking enables the node shell and VM/LXC consoles."
+            linked != null -> "Linking enables the node shell and VM/LXC consoles (qm terminal / pct enter)."
+            knownNodes.isEmpty() -> "Add a Proxmox cluster first to link a node. Not needed for a plain server or Docker VM."
+            else -> "Pick the node if this host is one; leave None for a VM, LXC or other server."
+        })
         fp?.let { Help("Trusted host key: $it") }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(onClick = { testAndSave() }, enabled = !busy && address.isNotBlank() && user.isNotBlank() &&
-            (auth == SshAuthType.PASSWORD || keyId != null), modifier = Modifier.fillMaxWidth()) {
+            (if (auth == SshAuthType.KEY) keyId != null else password.isNotEmpty()), modifier = Modifier.fillMaxWidth()) {
             if (busy) CircularProgressIndicator(Modifier.height(18.dp), strokeWidth = 2.dp) else Text("Test and save")
         }
         if (existing != null) TextButton(onClick = { confirmDelete = true }, Modifier.fillMaxWidth()) { Text("Remove host", color = MaterialTheme.colorScheme.error) }

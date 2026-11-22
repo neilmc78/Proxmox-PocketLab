@@ -10,6 +10,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.onNodeWithText
 import dev.pocketlab.data.Appearance
 import dev.pocketlab.data.AppConfig
@@ -111,9 +113,31 @@ class UiSmokeTest {
         compose.onNodeWithText("Needs attention").assertExists()
         // pve3 offline + exited(1) container should be flagged.
         assertTrue(compose.onAllNodesWithText("Node offline").fetchSemanticsNodes().isNotEmpty())
+        // pve2 has an SSH host; pve1 and pve3 don't, so Overview offers the next step for them.
+        compose.onNodeWithText("Now set up SSH for pve1").assertExists()
+        compose.onNodeWithText("Now set up SSH for pve2").assertDoesNotExist()
+        compose.onNodeWithText("How to set up").assertExists()
     }
 
     @Test fun workloads() = shoot("2-workloads", start = "workloads")
+
+    /** Tabs always open their main page, and the highlight follows the tab you're in. */
+    @Test fun tabNavigation() {
+        fun tab(name: String) = compose.onNodeWithContentDescription(name)
+        shoot("18a-nav-workloads", start = "workloads")
+        compose.onAllNodesWithText("linux")[0].performClick()                 // into a guest
+        compose.waitForIdle()
+        tab("Workloads").assertIsSelected()
+        tab("Settings").performClick(); compose.waitForIdle()
+        tab("Settings").assertIsSelected()
+        tab("Workloads").performClick(); compose.waitForIdle()               // back to the list, not the guest
+        compose.onNodeWithText("Search by name", substring = true).assertExists()
+        tab("Workloads").assertIsSelected()
+        tab("Overview").performClick(); compose.waitForIdle()                // Overview, not Hosts
+        compose.onNodeWithText("Needs attention").assertExists()
+        tab("Overview").assertIsSelected()
+        tab("Hosts").assertIsNotSelected()
+    }
     @Test fun guest() {
         // A fake Proxmox API (self-signed cert, pinned) so the detail screen shows real config, graphs and snapshots.
         val cert = okhttp3.tls.HeldCertificate.Builder().commonName("pve2").build()
@@ -150,6 +174,8 @@ class UiSmokeTest {
                 PocketlabTheme(cfg.appearance) { PocketlabRoot(poll = false, openRoute = Routes.guest("c1", "pve2", "qemu", 202)) }
             }
             compose.waitUntil(10_000) { compose.onAllNodesWithText("2 cores", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            // Graph history loads separately from the config; both charts must show data.
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("tap for values", substring = true).fetchSemanticsNodes().size == 2 }
             compose.onNodeWithText("Failed", substring = true).assertDoesNotExist()
             val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
             File(outDir, "3-guest.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -159,6 +185,54 @@ class UiSmokeTest {
     @Test fun hosts() = shoot("5-hosts", start = "hosts")
     @Test fun terminalTab() = shoot("6-terminal", start = "terminal")
     @Test fun settings() = shoot("7-settings", start = "settings")
+
+    /** The setup guide fits one screen and copies a ready-made key install command. */
+    @Test fun setupGuide() {
+        shoot("19-guide", open = "guide")
+        compose.onNodeWithText("Docker", substring = false).assertExists()
+        compose.onNodeWithText("Copy install command").performClick()
+        compose.waitForIdle()
+        val clip = (org.robolectric.RuntimeEnvironment.getApplication().getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager).primaryClip?.getItemAt(0)?.text?.toString()
+        org.junit.Assert.assertEquals("mkdir -p ~/.ssh && echo 'ssh-ed25519 AAAA phone' >> ~/.ssh/authorized_keys", clip)
+    }
+
+    /** An LXC page offers "Docker in this container" once its node has an SSH host. */
+    @Test fun lxcDockerSwitch() {
+        shoot("20-lxc-docker", open = Routes.guest("c1", "pve2", "lxc", 301))
+        compose.onNodeWithText("Docker in this container").assertExists()
+        compose.onNodeWithText("through pve2's SSH", substring = true).assertExists()
+        // Connect offers the node's container shell, a direct SSH login, and installing this phone's key.
+        // (The extended FAB's label isn't in the merged tree, so use the unmerged one.)
+        compose.onAllNodesWithText("Connect", useUnmergedTree = true)[0].performClick()
+        compose.waitForIdle()
+        snap("20b-lxc-connect")
+        compose.onNodeWithText("Container shell (via pve2)").assertExists()
+        compose.onNodeWithText("SSH into the LXC").assertExists()
+        compose.onNodeWithText("Install this phone's key").performClick()
+        compose.waitForIdle()
+        snap("20c-lxc-install-key")
+        compose.onNodeWithText("This key will log in to pihole as root only", substring = true).assertExists()
+    }
+
+    /** "Close all connections" asks first instead of acting on tap. */
+    @Test fun closeConnectionsAsksFirst() {
+        shoot("7a-settings", start = "settings")
+        compose.onNodeWithText("Close all connections").performClick()
+        snap("7b-settings-close-confirm")
+        compose.onNodeWithText("Close all connections?").assertExists()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Close all connections?").assertDoesNotExist()
+    }
+
+    /** Token sees the node but no guests (missing VM.Audit on /vms): say so and how to fix it. */
+    @Test fun noGuestsVisibleHint() {
+        val s = lab.snapshot.value
+        lab.setSnapshotForTest(s.copy(clusters = s.clusters.mapValues { (_, c) -> c.copy(guests = emptyList()) }))
+        shoot("2b-workloads-no-guests", start = "workloads")
+        compose.onNodeWithText("No VMs or containers visible", substring = true).assertExists()
+    }
     @Test fun appearance() = shoot("8-appearance", open = "appearance")
     /** Small phone: the accent swatches must stay round, not get squeezed. */
     @Config(qualifiers = "w320dp-h700dp-xhdpi")
@@ -169,6 +243,18 @@ class UiSmokeTest {
     }
     @Test fun editCluster() = shoot("9-add-cluster", open = Routes.editCluster())
     @Test fun editHost() = shoot("10-add-host", open = Routes.editHost())
+
+    /** Naming a new host after a node links it automatically; None overrides that. */
+    @Test fun hostNodeLinkPickedAutomatically() {
+        shoot("10a-add-host", open = Routes.editHost())
+        compose.onNodeWithText("Name").performTextReplacement("pve2")
+        compose.onNodeWithText("None").performScrollTo()
+        snap("10b-add-host-node-auto")
+        compose.onAllNodesWithText("pve2")[1].assertIsSelected()          // [0] is the Name field
+        compose.onNodeWithText("Picked because the name matches", substring = true).assertExists()
+        compose.onNodeWithText("None").performClick(); compose.waitForIdle()
+        compose.onNodeWithText("None").assertIsSelected()
+    }
     @Test fun keys() = shoot("11-keys", open = "keys")
     @Test fun logs() = shoot("15-logs", open = Routes.logs("h1", "9b24f266c05f00"))
     @Test fun secretRevealAndCopyCommands() {
@@ -231,5 +317,8 @@ class UiSmokeTest {
         lab.setSnapshotForTest(LabSnapshot())
         shoot("0-first-run")
         compose.onNodeWithText("Connect your lab").assertExists()
+        compose.onNodeWithText("How to set up, step by step", substring = true).performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Make an SSH key and install it").assertExists()
     }
 }

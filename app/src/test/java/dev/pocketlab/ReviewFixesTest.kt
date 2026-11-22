@@ -19,6 +19,77 @@ import java.security.KeyStoreException
 import javax.crypto.spec.SecretKeySpec
 
 class ReviewFixesTest {
+    /** Guest notes: HTML passes through untouched; Markdown becomes simple HTML with line breaks kept. */
+    @Test fun notesToHtml() {
+        val html = "<div align='center'><h2>Overseerr LXC</h2></div>"
+        assertEquals(html, dev.pocketlab.ui.screens.notesToHtml(html))
+        val md = dev.pocketlab.ui.screens.notesToHtml("# Media\n**Port** 5055 and *fast*\n- [Docs](https://docs.example.com)\n1 < 2 `code`")
+        assertTrue(md, md.contains("<b><big>Media</big></b><br>"))
+        assertTrue(md, md.contains("<b>Port</b> 5055 and <i>fast</i>"))
+        assertTrue(md, md.contains("• <a href=\"https://docs.example.com\">Docs</a>"))
+        assertTrue(md, md.contains("1 &lt; 2 <tt>code</tt>"))                        // plain text is escaped
+    }
+
+    /** Installing the phone's key in an LXC: user and key are arguments, never part of the script. */
+    @Test fun lxcInstallKeyCommandIsSafe() {
+        val key = "ssh-ed25519 AAAAC3Nza phone's key"
+        val cmd = dev.pocketlab.ssh.lxcInstallKeyCommand(117, "root", key, sudo = false)
+        assertTrue(cmd, cmd.startsWith("pct exec 117 -- sh -c '"))
+        assertTrue(cmd, cmd.endsWith(" sh 'root' 'ssh-ed25519 AAAAC3Nza phone'\\''s key'"))
+        assertTrue(dev.pocketlab.ssh.lxcInstallKeyCommand(117, "neil", key, sudo = true).startsWith("sudo -n pct exec 117"))
+        for (bad in listOf("root; rm -rf /", "Neil", "", "a b", "\$(id)")) {
+            assertTrue(bad, runCatching { dev.pocketlab.ssh.lxcInstallKeyCommand(117, bad, key, false) }.isFailure)
+        }
+    }
+
+    /** The install script itself, run against a throwaway home: creates ~/.ssh, adds the key once. */
+    @Test fun lxcInstallKeyScriptWorks() {
+        // Run as the current user (chown to someone else would need root) against a fake passwd.
+        val me = System.getProperty("user.name")
+        val home = File(dir, "home").apply { mkdirs() }
+        val passwd = File(dir, "passwd").apply { writeText("$me:x:1000:1000::${home.path}:/bin/sh\n") }
+        val script = dev.pocketlab.ssh.installKeyScript(passwd.path)
+        fun run(user: String): Int {
+            val p = ProcessBuilder("sh", "-c", script, "sh", user, "ssh-ed25519 AAAA k").redirectErrorStream(true).start()
+            p.inputStream.readBytes(); return p.waitFor()
+        }
+        assertEquals(0, run(me)); assertEquals(0, run(me))
+        assertEquals(listOf("ssh-ed25519 AAAA k"), File(home, ".ssh/authorized_keys").readLines())   // added once, not twice
+        assertEquals(3, run("nobodyhere"))                                                          // unknown user: refused
+    }
+
+    /** The no-guests fix matches the token: the PocketlabPower role for pocketlab@pve, an ACL otherwise. */
+    @Test fun noGuestsHintFitsTheToken() {
+        val own = dev.pocketlab.ui.screens.noGuestsHint("pocketlab@pve!phone")
+        assertTrue(own, own.endsWith("pveum role modify PocketlabPower --append 1 --privs VM.Audit"))
+        val other = dev.pocketlab.ui.screens.noGuestsHint("root@pam!tablet")
+        assertFalse(other, other.contains("PocketlabPower"))
+        assertTrue(other, other.contains("pveum acl modify /vms --tokens 'root@pam!tablet' --roles PVEAuditor"))
+        assertTrue(other, other.contains("pveum acl modify /vms --users 'root@pam' --roles PVEAuditor"))
+    }
+
+    /** Docker in an LXC runs through the node's SSH host with pct exec; no host of its own is stored. */
+    @Test fun lxcDockerGoesThroughTheNode() {
+        val node = SshHost(id = "n", name = "proxmox", address = "192.168.68.10", username = "root", proxmoxNode = "proxmox", dockerEnabled = false)
+        val cfg = AppConfig(clusters = listOf(ProxmoxCluster(id = "c", name = "lab", baseUrl = "https://192.168.68.10:8006", tokenId = "a@pve!b", tokenSecret = "s")),
+            hosts = listOf(node), lxcDocker = listOf(dev.pocketlab.data.LxcDocker("c", 121, "proxmox", "scryer")))
+        val h = cfg.lxcDockerHosts().single()
+        assertEquals(AppConfig.lxcDockerId("c", 121), h.id)
+        assertEquals("scryer", h.name)
+        assertEquals("192.168.68.10", h.address)
+        assertEquals(121, h.pctVmid)
+        assertTrue(h.dockerEnabled)
+        assertEquals(2, cfg.allHosts().size)
+        assertEquals(1, cfg.hosts.size)                                 // nothing extra stored
+        val cmd = dev.pocketlab.docker.DockerClient(h, emptyList()).execCommand("abc")
+        assertTrue(cmd, cmd.startsWith("pct exec 121 -- docker exec -it 'abc'"))
+        // Non-root node user needs sudo for pct.
+        val cmd2 = dev.pocketlab.docker.DockerClient(h.copy(username = "neil"), emptyList()).execCommand("abc")
+        assertTrue(cmd2, cmd2.startsWith("sudo -n pct exec 121 -- docker"))
+        // Without an SSH host for the node there is nothing to connect through.
+        assertTrue(cfg.copy(hosts = emptyList()).lxcDockerHosts().isEmpty())
+    }
+
     private val key = SecretKeySpec(ByteArray(32) { 3 }, "AES")
     private val dir = File.createTempFile("store", "").apply { delete(); mkdirs() }
     private val file = File(dir, "config.enc")

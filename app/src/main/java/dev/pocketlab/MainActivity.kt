@@ -15,8 +15,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         // Root shells, container logs, inventory and secret fields: keep them out of the recents
-        // thumbnail, screenshots and screen recordings.
-        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        // thumbnail, screenshots and screen recordings. The "Pocketlab Dev" test build (dev.pocketlab.dev)
+        // allows screenshots so UI problems can be reported; release builds always block them.
+        if (!packageName.endsWith(".dev")) {
+            window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        }
         setContent {
             val cfg by PocketlabApp.lab.store.config.collectAsStateWithLifecycle()
             PocketlabTheme(cfg.appearance) { PocketlabRoot() }
