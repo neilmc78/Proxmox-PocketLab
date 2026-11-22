@@ -151,6 +151,7 @@ fun PocketlabRoot(startRoute: String = "overview", poll: Boolean = true, openRou
                     composable("settings") { SettingsScreen() }
                     composable("appearance") { AppearanceScreen() }
                     composable("keys") { KeysScreen() }
+                    composable("guide") { dev.pocketlab.ui.screens.GuideScreen() }
                     composable("guest/{c}/{n}/{t}/{v}") {
                         val a = it.arguments!!
                         GuestScreen(a.getString("c")!!, a.getString("n")!!, a.getString("t")!!, a.getString("v")!!.toInt())

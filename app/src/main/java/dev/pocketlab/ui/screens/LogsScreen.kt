@@ -80,7 +80,7 @@ fun LogsScreen(hostId: String, id: String) {
     val t = LocalTones.current
     val scope = rememberCoroutineScope()
     val c = labSnapshot().hosts[hostId]?.containers?.firstOrNull { it.id == id }
-    val host = labConfig().hosts.firstOrNull { it.id == hostId }
+    val host = labConfig().allHosts().firstOrNull { it.id == hostId }
     val lines = remember { mutableStateListOf<LogLine>() }
     var received by remember { mutableLongStateOf(0L) }   // seq of the newest line
     var seenSeq by remember { mutableLongStateOf(0L) }    // newest line the user has had on screen

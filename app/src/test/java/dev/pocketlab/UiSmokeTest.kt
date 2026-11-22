@@ -182,6 +182,24 @@ class UiSmokeTest {
     @Test fun terminalTab() = shoot("6-terminal", start = "terminal")
     @Test fun settings() = shoot("7-settings", start = "settings")
 
+    /** The setup guide fits one screen and copies a ready-made key install command. */
+    @Test fun setupGuide() {
+        shoot("19-guide", open = "guide")
+        compose.onNodeWithText("Docker", substring = false).assertExists()
+        compose.onNodeWithText("Copy install command").performClick()
+        compose.waitForIdle()
+        val clip = (org.robolectric.RuntimeEnvironment.getApplication().getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager).primaryClip?.getItemAt(0)?.text?.toString()
+        org.junit.Assert.assertEquals("mkdir -p ~/.ssh && echo 'ssh-ed25519 AAAA phone' >> ~/.ssh/authorized_keys", clip)
+    }
+
+    /** An LXC page offers "Docker in this container" once its node has an SSH host. */
+    @Test fun lxcDockerSwitch() {
+        shoot("20-lxc-docker", open = Routes.guest("c1", "pve2", "lxc", 301))
+        compose.onNodeWithText("Docker in this container").assertExists()
+        compose.onNodeWithText("through pve2's SSH", substring = true).assertExists()
+    }
+
     /** "Close all connections" asks first instead of acting on tap. */
     @Test fun closeConnectionsAsksFirst() {
         shoot("7a-settings", start = "settings")

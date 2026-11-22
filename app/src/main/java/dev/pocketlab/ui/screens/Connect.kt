@@ -12,18 +12,8 @@ fun openTerminal(nav: NavHostController, tones: Tones, title: String, host: SshH
     nav.navigate(Routes.term(s.id))
 }
 
-/**
- * SSH host that *is* a given Proxmox node. An explicit (cluster, node) link wins. Links without a
- * cluster, and plain name matches, only count when there's a single cluster: with several, a node
- * called "pve" could be any of them and a console command must never go to the wrong machine.
- */
-fun hostForNode(clusterId: String, node: String): SshHost? {
-    val cfg = lab.config
-    cfg.hosts.firstOrNull { it.proxmoxClusterId == clusterId && it.proxmoxNode.equals(node, true) }?.let { return it }
-    if (cfg.clusters.size > 1) return null
-    return cfg.hosts.firstOrNull { it.proxmoxClusterId == null && it.proxmoxNode.equals(node, true) }
-        ?: cfg.hosts.firstOrNull { it.proxmoxNode == null && it.name.equals(node, true) }
-}
+/** SSH host that *is* a given Proxmox node; see [dev.pocketlab.data.AppConfig.nodeHost]. */
+fun hostForNode(clusterId: String, node: String): SshHost? = lab.config.nodeHost(clusterId, node)
 
 /** SSH host for a guest: an SSH host whose name is exactly the VM/LXC name. */
 fun hostForGuest(name: String): SshHost? = lab.config.hosts.firstOrNull { it.name.equals(name, true) }

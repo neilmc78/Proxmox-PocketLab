@@ -119,7 +119,7 @@ fun WorkloadsScreen(initialFilter: String) {
             }
         }
 
-        if (filter == "All" || filter == "Docker") cfg.hosts.filter { it.dockerEnabled }.forEach { h ->
+        if (filter == "All" || filter == "Docker") cfg.allHosts().filter { it.dockerEnabled }.forEach { h ->
             val st = snap.hosts[h.id] ?: return@forEach
             val cs = st.containers.filter { c ->
                 q.isEmpty() || c.name.lowercase().contains(q) || c.image.lowercase().contains(q) || (c.composeProject?.lowercase()?.contains(q) == true)
@@ -131,7 +131,7 @@ fun WorkloadsScreen(initialFilter: String) {
                     Spacer(Modifier.width(10.dp))
                     CountPill(cs.size)
                 }
-                Text("Docker · over SSH", color = t.textDim, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(bottom = 10.dp))
+                Text(if (h.pctVmid != null) "Docker · in LXC ${h.pctVmid}, via ${h.address}" else "Docker · over SSH", color = t.textDim, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(bottom = 10.dp))
                 (st.error ?: st.dockerError)?.let { ErrorCard(it) }
                 if (cs.isNotEmpty()) LabCard(Modifier.padding(bottom = 12.dp)) {
                     cs.forEachIndexed { i, c ->

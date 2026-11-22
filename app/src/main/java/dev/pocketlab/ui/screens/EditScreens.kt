@@ -284,7 +284,7 @@ fun EditHostScreen(id: String?) {
     var auth by remember { mutableStateOf(existing?.authType ?: if (cfg.keys.isEmpty()) SshAuthType.PASSWORD else SshAuthType.KEY) }
     var password by remember { mutableStateOf(existing?.password ?: "") }
     var keyId by remember { mutableStateOf(existing?.keyId ?: cfg.keys.firstOrNull()?.id) }
-    var docker by remember { mutableStateOf(existing?.dockerEnabled ?: true) }
+    var dockerChoice by remember { mutableStateOf(existing?.dockerEnabled) }
     var dockerSudo by remember { mutableStateOf(existing?.dockerSudo ?: false) }
     var node by remember { mutableStateOf(existing?.proxmoxNode ?: "") }
     var nodeCluster by remember { mutableStateOf(existing?.proxmoxClusterId) }
@@ -320,11 +320,14 @@ fun EditHostScreen(id: String?) {
     fun linkedNode(): Pair<String?, String>? =
         if (nodeTouched) node.takeIf { it.isNotBlank() }?.let { nodeCluster to it } else autoNode()
 
+    // Until the user flips it: off for a Proxmox node (Docker rarely runs on the hypervisor), on otherwise.
+    fun docker() = dockerChoice ?: (linkedNode() == null)
+
     fun build() = SshHost(
         id = existing?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim().ifBlank { hostAddr() },
         address = hostAddr(), port = hostPort(), username = user.trim(), authType = auth,
         password = password.takeIf { auth == SshAuthType.PASSWORD }, keyId = keyId.takeIf { auth == SshAuthType.KEY },
-        hostKeyFingerprint = effectiveFp(), dockerEnabled = docker, dockerSudo = dockerSudo,
+        hostKeyFingerprint = effectiveFp(), dockerEnabled = docker(), dockerSudo = dockerSudo,
         proxmoxNode = linkedNode()?.second, proxmoxClusterId = linkedNode()?.first,
     )
 
@@ -372,9 +375,9 @@ fun EditHostScreen(id: String?) {
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("Docker"); Help("List containers on this host") }
-            Switch(docker, { docker = it })
+            Switch(docker(), { dockerChoice = it })
         }
-        if (docker) Row(verticalAlignment = Alignment.CenterVertically) {
+        if (docker()) Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("Use sudo for docker"); Help("Only if the user isn't in the docker group (needs passwordless sudo)") }
             Switch(dockerSudo, { dockerSudo = it })
         }

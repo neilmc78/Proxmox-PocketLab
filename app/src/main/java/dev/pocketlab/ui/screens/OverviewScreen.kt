@@ -70,10 +70,12 @@ fun OverviewScreen() {
             st?.nodes?.filter { it.online && it.maxMem > 0 && it.mem.toDouble() / it.maxMem > 0.92 }
                 ?.forEach { add(Attention(it.name, "Memory above 92%", Health.WARN, Routes.node(cl.id, it.name))) }
         }
-        cfg.hosts.forEach { h ->
+        cfg.allHosts().forEach { h ->
             val st = snap.hosts[h.id]
-            if (st?.error != null) add(Attention(h.name, st.error, Health.BAD, Routes.host(h.id)))
-            else if (st?.dockerError != null) add(Attention(h.name, "Docker: ${st.dockerError}", Health.WARN, Routes.host(h.id)))
+            // LXC Docker hosts have no host page of their own: their problems open Workloads → Docker.
+            val page = if (h.pctVmid != null) Routes.workloads("Docker") else Routes.host(h.id)
+            if (st?.error != null) add(Attention(h.name, st.error, Health.BAD, page))
+            else if (st?.dockerError != null) add(Attention(h.name, "Docker: ${st.dockerError}", Health.WARN, page))
             st?.containers?.filter { it.healthState() == Health.BAD }?.forEach {
                 add(Attention(it.name, it.status, Health.BAD, Routes.container(h.id, it.id)))
             }

@@ -61,6 +61,50 @@ import java.util.Date
 
 private data class PowerAction(val api: String, val label: String, val explain: String, val destructive: Boolean)
 
+/**
+ * "Docker runs in this container": lists the LXC's Docker containers through the node's SSH host
+ * (`pct exec`), so the LXC needs no SSH server or key of its own.
+ */
+@Composable
+private fun LxcDockerCard(g: PveGuest) {
+    val nav = LocalNav.current
+    val t = LocalTones.current
+    val scope = rememberCoroutineScope()
+    val cfg = labConfig()
+    val nodeHost = cfg.nodeHost(g.clusterId, g.node)
+    val on = cfg.lxcDocker.any { it.clusterId == g.clusterId && it.vmid == g.vmid }
+    val hostId = dev.pocketlab.data.AppConfig.lxcDockerId(g.clusterId, g.vmid)
+    val st = labSnapshot().hosts[hostId]
+    LabCard {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Docker in this container", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    when {
+                        nodeHost == null -> "Needs an SSH host for node ${g.node} first (Settings → How to set up)."
+                        !on -> "Show its Docker containers, through ${nodeHost.name}'s SSH. Nothing to install in the LXC."
+                        st?.dockerError != null -> st.dockerError
+                        st?.loaded == true -> "${st.containers.size} container(s) · under Workloads → Docker"
+                        else -> "Connecting through ${nodeHost.name}…"
+                    },
+                    style = MaterialTheme.typography.bodyMedium, color = if (on && st?.dockerError != null) MaterialTheme.colorScheme.error else t.textDim,
+                )
+            }
+            androidx.compose.material3.Switch(on, enabled = nodeHost != null, onCheckedChange = { enable ->
+                lab.store.update { c ->
+                    val rest = c.lxcDocker.filterNot { it.clusterId == g.clusterId && it.vmid == g.vmid }
+                    c.copy(lxcDocker = if (enable) rest + dev.pocketlab.data.LxcDocker(g.clusterId, g.vmid, g.node, g.name) else rest)
+                }
+                if (enable) scope.launch { lab.refreshHost(hostId) }
+            })
+        }
+        if (on && st?.containers?.isNotEmpty() == true) {
+            Divider()
+            NavRow("View containers", null, onClick = { nav.navigate(Routes.workloads("Docker")) })
+        }
+    }
+}
+
 private fun actionsFor(g: PveGuest): List<PowerAction> {
     val vm = g.type == GuestType.QEMU
     val what = if (vm) "VM" else "container"
@@ -148,6 +192,7 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
                 if (g.running) Text(uptime(g.uptime), color = t.textDim, style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(14.dp))
                 LabCard { NavRow("Power and actions", actionsFor(g).joinToString(", ") { it.label }, onClick = { powerSheet = true }) }
+                if (g.type == GuestType.LXC) { Spacer(Modifier.height(10.dp)); LxcDockerCard(g) }
                 Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     val now = System.currentTimeMillis() / 1000

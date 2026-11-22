@@ -21,7 +21,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+import dev.pocketlab.ui.Routes
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.LinkOff
@@ -68,6 +72,68 @@ import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
 
+/**
+ * Settings → How to set up: the whole setup on one screen. Each step has a button that goes there,
+ * and step 2 can copy a ready-made command that installs this phone's public key.
+ */
+@Composable
+fun GuideScreen() {
+    val nav = LocalNav.current
+    val t = LocalTones.current
+    val ctx = LocalContext.current
+    val snackbar = LocalSnackbar.current
+    val scope = rememberCoroutineScope()
+    val key = labConfig().keys.lastOrNull { it.publicKey != null }
+
+    @Composable
+    fun Step(n: Int, title: String, body: String, actions: @Composable () -> Unit = {}) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+            Text("$n", Modifier.size(26.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer).padding(top = 2.dp),
+                color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(body, style = MaterialTheme.typography.bodySmall, color = t.textDim)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { actions() }
+            }
+        }
+    }
+    @Composable
+    fun Go(label: String, onClick: () -> Unit) =
+        TextButton(onClick = onClick, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+            modifier = Modifier.height(32.dp)) { Text(label, style = MaterialTheme.typography.labelLarge) }
+
+    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        TopBar("How to set up", onBack = { nav.popBackStack() })
+        Step(1, "Add Proxmox",
+            "Address: https://<node IP>:8006. Open \"First time? Create the token\", copy the commands into the node's Shell " +
+                "(Proxmox web UI → node → Shell), paste the secret it prints, Test and save, then Trust the certificate.") {
+            Go("Add cluster") { nav.navigate(Routes.editCluster()) }
+        }
+        Step(2, "Make an SSH key and install it",
+            "Generate a key on this phone, then run the install command in the node's Shell. The private key never leaves the phone.") {
+            Go(if (key == null) "Generate key" else "SSH keys") { nav.navigate("keys") }
+            if (key != null) Go("Copy install command") {
+                val cmd = "mkdir -p ~/.ssh && echo '${key.publicKey}' >> ~/.ssh/authorized_keys"
+                (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("install key", cmd))
+                scope.launch { snackbar.showSnackbar("Copied: paste it in the node's Shell") }
+            }
+        }
+        Step(3, "Add the node as an SSH host",
+            "Address: the node's IP, user root, your key. The Proxmox node is picked for you. Test and save, check the fingerprint " +
+                "against ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the node, then Trust. " +
+                "You get the node shell and a console for every VM and LXC.") {
+            Go("Add SSH host") { nav.navigate(Routes.editHost()) }
+        }
+        Step(4, "Docker",
+            "In an LXC: open it and turn on \"Docker in this container\". It runs through the node's SSH, nothing to install. " +
+                "In a VM: add the VM as its own SSH host (install the key in the VM too), named like the VM, with Docker on. One per VM.") {
+            Go("Workloads") { nav.navigate(Routes.workloads()) }
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
 @Composable
 fun SettingsScreen() {
     val nav = LocalNav.current
@@ -83,6 +149,9 @@ fun SettingsScreen() {
         item {
             Text("Settings", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 20.dp, bottom = 16.dp))
             LabCard {
+                NavRow("How to set up", "Proxmox, SSH keys, consoles and Docker, step by step",
+                    icon = Icons.AutoMirrored.Outlined.HelpOutline, onClick = { nav.navigate("guide") })
+                Divider()
                 NavRow("Appearance", "${cfg.appearance.mode.name.lowercase().replaceFirstChar { it.uppercase() }} · ${cfg.appearance.theme} · ${cfg.appearance.accent}",
                     icon = Icons.Outlined.Palette, onClick = { nav.navigate("appearance") })
                 Divider()

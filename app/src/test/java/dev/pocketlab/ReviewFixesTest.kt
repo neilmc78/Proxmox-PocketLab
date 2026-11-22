@@ -19,6 +19,28 @@ import java.security.KeyStoreException
 import javax.crypto.spec.SecretKeySpec
 
 class ReviewFixesTest {
+    /** Docker in an LXC runs through the node's SSH host with pct exec; no host of its own is stored. */
+    @Test fun lxcDockerGoesThroughTheNode() {
+        val node = SshHost(id = "n", name = "proxmox", address = "192.168.68.10", username = "root", proxmoxNode = "proxmox", dockerEnabled = false)
+        val cfg = AppConfig(clusters = listOf(ProxmoxCluster(id = "c", name = "lab", baseUrl = "https://192.168.68.10:8006", tokenId = "a@pve!b", tokenSecret = "s")),
+            hosts = listOf(node), lxcDocker = listOf(dev.pocketlab.data.LxcDocker("c", 121, "proxmox", "scryer")))
+        val h = cfg.lxcDockerHosts().single()
+        assertEquals(AppConfig.lxcDockerId("c", 121), h.id)
+        assertEquals("scryer", h.name)
+        assertEquals("192.168.68.10", h.address)
+        assertEquals(121, h.pctVmid)
+        assertTrue(h.dockerEnabled)
+        assertEquals(2, cfg.allHosts().size)
+        assertEquals(1, cfg.hosts.size)                                 // nothing extra stored
+        val cmd = dev.pocketlab.docker.DockerClient(h, emptyList()).execCommand("abc")
+        assertTrue(cmd, cmd.startsWith("pct exec 121 -- docker exec -it 'abc'"))
+        // Non-root node user needs sudo for pct.
+        val cmd2 = dev.pocketlab.docker.DockerClient(h.copy(username = "neil"), emptyList()).execCommand("abc")
+        assertTrue(cmd2, cmd2.startsWith("sudo -n pct exec 121 -- docker"))
+        // Without an SSH host for the node there is nothing to connect through.
+        assertTrue(cfg.copy(hosts = emptyList()).lxcDockerHosts().isEmpty())
+    }
+
     private val key = SecretKeySpec(ByteArray(32) { 3 }, "AES")
     private val dir = File.createTempFile("store", "").apply { delete(); mkdirs() }
     private val file = File(dir, "config.enc")
