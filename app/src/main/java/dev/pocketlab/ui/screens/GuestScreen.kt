@@ -328,7 +328,7 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
         }
     }
 
-    if (installKey) InstallKeyDialog(g, hostForNode(g.clusterId, g.node), staticIpOf(config)) { installKey = false }
+    if (installKey) InstallKeySheet(g, hostForNode(g.clusterId, g.node), staticIpOf(config)) { installKey = false }
 }
 
 private fun staticIpOf(config: Map<String, String>?) =
@@ -353,7 +353,7 @@ private fun ConsoleRow(g: PveGuest, nodeHost: dev.pocketlab.data.SshHost?, conso
  * SSH host (pct exec). Says plainly that the key then works for that user only.
  */
 @Composable
-private fun InstallKeyDialog(g: PveGuest, nodeHost: dev.pocketlab.data.SshHost?, staticIp: String, onDismiss: () -> Unit) {
+private fun InstallKeySheet(g: PveGuest, nodeHost: dev.pocketlab.data.SshHost?, staticIp: String, onDismiss: () -> Unit) {
     val nav = LocalNav.current
     val scope = rememberCoroutineScope()
     val keys = labConfig().keys.filter { it.publicKey != null }
@@ -363,50 +363,49 @@ private fun InstallKeyDialog(g: PveGuest, nodeHost: dev.pocketlab.data.SshHost?,
     var result by remember { mutableStateOf<String?>(null) }
     var done by remember { mutableStateOf(false) }
     val validUser = dev.pocketlab.ssh.UNIX_USER.matches(user)
-    AlertDialog(onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text(if (done) "Key installed" else "Install this phone's key in ${g.name}") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!done) {
-                    if (keys.isEmpty()) Text("No key on this phone yet: generate one in Settings → SSH keys first.")
-                    else {
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            keys.forEach { k -> androidx.compose.material3.FilterChip(keyId == k.id, { keyId = k.id }, label = { Text(k.name) }) }
-                        }
-                        OutlinedTextField(user, { user = it.trim().lowercase() }, Modifier.fillMaxWidth(), label = { Text("Log in as user") },
-                            singleLine = true, isError = user.isNotEmpty() && !validUser)
-                        Text("This key will log in to ${g.name} as ${user.ifBlank { "…" }} only. Each user has their own list of allowed " +
-                            "keys: to log in as another user (root included), install it for that user too.",
-                            style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                        Text("Done through ${nodeHost?.name ?: g.node}'s SSH. The private key never leaves this phone.",
-                            style = MaterialTheme.typography.bodySmall, color = LocalTones.current.textDim)
+    // A bottom sheet like the app's other actions (snapshot, power), not a dialog window.
+    Sheet({ if (!busy) onDismiss() }) {
+        Text(if (done) "Key installed" else "Install this phone's key in ${g.name}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!done) {
+                if (keys.isEmpty()) Text("No key on this phone yet: generate one in Settings → SSH keys first.")
+                else {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        keys.forEach { k -> androidx.compose.material3.FilterChip(keyId == k.id, { keyId = k.id }, label = { Text(k.name) }) }
                     }
+                    OutlinedTextField(user, { user = it.trim().lowercase() }, Modifier.fillMaxWidth(), label = { Text("Log in as user") },
+                        singleLine = true, isError = user.isNotEmpty() && !validUser)
+                    Text("This key will log in to ${g.name} as ${user.ifBlank { "…" }} only. Each user has their own list of allowed " +
+                        "keys: to log in as another user (root included), install it for that user too.",
+                        style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                    Text("Done through ${nodeHost?.name ?: g.node}'s SSH. The private key never leaves this phone.",
+                        style = MaterialTheme.typography.bodySmall, color = LocalTones.current.textDim)
                 }
-                result?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
             }
-        },
-        confirmButton = {
-            if (done) TextButton(onClick = {
-                onDismiss(); nav.navigate(Routes.editHost(name = g.name, address = staticIp, user = user, keyId = keyId.orEmpty()))
-            }) { Text("Add SSH host") }
-            else TextButton(enabled = !busy && nodeHost != null && keyId != null && validUser, onClick = {
-                val key = keys.first { it.id == keyId }
-                busy = true; result = null
-                scope.launch {
-                    result = try {
-                        val r = dev.pocketlab.ssh.SshPool.exec(nodeHost!!, lab.config.keys,
-                            dev.pocketlab.ssh.lxcInstallKeyCommand(g.vmid, user, key.publicKey!!, sudo = nodeHost.username != "root"), 30)
-                        if (r.ok) {
-                            done = true
-                            "Installed for $user in ${g.name}. Add ${g.name} as an SSH host with user $user and key ${key.name} to log in directly." +
-                                (if (r.stdout.contains("no-sshd")) "\n\nNote: no SSH server was found in ${g.name}. Install openssh-server there to log in directly." else "")
-                        } else r.stderr.ifBlank { "Failed (exit ${r.exit})" }.trim()
-                    } catch (e: Exception) { e.message ?: e.javaClass.simpleName }
-                    busy = false
-                }
-            }) { Text(if (busy) "Installing…" else "Install") }
-        },
-        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text(if (done) "Close" else "Cancel") } })
+            result?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (done) Button(onClick = {
+            onDismiss(); nav.navigate(Routes.editHost(name = g.name, address = staticIp, user = user, keyId = keyId.orEmpty()))
+        }, Modifier.fillMaxWidth()) { Text("Add ${g.name} as an SSH host") }
+        else Button(enabled = !busy && nodeHost != null && keyId != null && validUser, modifier = Modifier.fillMaxWidth(), onClick = {
+            val key = keys.first { it.id == keyId }
+            busy = true; result = null
+            scope.launch {
+                result = try {
+                    val r = dev.pocketlab.ssh.SshPool.exec(nodeHost!!, lab.config.keys,
+                        dev.pocketlab.ssh.lxcInstallKeyCommand(g.vmid, user, key.publicKey!!, sudo = nodeHost.username != "root"), 30)
+                    if (r.ok) {
+                        done = true
+                        "Installed for $user in ${g.name}. Add ${g.name} as an SSH host with user $user and key ${key.name} to log in directly." +
+                            (if (r.stdout.contains("no-sshd")) "\n\nNote: no SSH server was found in ${g.name}. Install openssh-server there to log in directly." else "")
+                    } else r.stderr.ifBlank { "Failed (exit ${r.exit})" }.trim()
+                } catch (e: Exception) { e.message ?: e.javaClass.simpleName }
+                busy = false
+            }
+        }) { Text(if (busy) "Installing…" else "Install for ${user.ifBlank { "…" }}") }
+    }
 }
 
 @Composable
