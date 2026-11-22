@@ -49,6 +49,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -197,26 +199,29 @@ private fun BottomBar(nav: NavHostController, current: String) {
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             tabs.forEach { tab ->
-                val selected = tab.route == current
+                val isSelected = tab.route == current
                 Column(
                     Modifier.weight(1f).clip(RoundedCornerShape(30.dp))
-                        .background(if (selected) MaterialTheme.colorScheme.primaryContainer else t.surface)
+                        .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else t.surface)
+                        .semantics { selected = isSelected }
                         .clickable {
-                            if (tab.route == current) nav.popBackStack(tab.route, inclusive = false).let { ok -> if (!ok) nav.navigate(tab.route) }
+                            // A tab always opens its main page. No saved per-tab stacks: restoring them brought
+                            // back whatever detail screen you'd left (and "overview", the start destination,
+                            // restored another tab's stack).
+                            if (tab.route == "overview") nav.popBackStack("overview", inclusive = false)
                             else nav.navigate(tab.route) {
-                                popUpTo("overview") { saveState = true }
+                                popUpTo("overview")
                                 launchSingleTop = true
-                                restoreState = true
                             }
                         }
                         .padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    val color = if (selected) MaterialTheme.colorScheme.primary else t.textDim
+                    val color = if (isSelected) MaterialTheme.colorScheme.primary else t.textDim
                     Icon(tab.icon, tab.label, tint = color)
                     Spacer(Modifier.height(2.dp))
                     Text(tab.label, color = color, style = labelStyle.copy(fontSize = labelSize), maxLines = 1, softWrap = false,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
                 }
             }
         }

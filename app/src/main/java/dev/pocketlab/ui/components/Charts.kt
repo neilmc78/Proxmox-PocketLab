@@ -88,7 +88,7 @@ fun TimeChart(
         }
         if (sel != null) Text("${clockTime(times[sel])} · ${describe(sel)}", style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { selected = null })
-        else Text(if (n >= 2) "$idleCaption · tap the graph for values" else idleCaption, color = t.textDim,
+        else Text(if (n >= 2) "$idleCaption · tap for values" else idleCaption, color = t.textDim,
             style = MaterialTheme.typography.bodySmall)
     }
 }

@@ -10,6 +10,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.onNodeWithText
 import dev.pocketlab.data.Appearance
 import dev.pocketlab.data.AppConfig
@@ -114,6 +116,24 @@ class UiSmokeTest {
     }
 
     @Test fun workloads() = shoot("2-workloads", start = "workloads")
+
+    /** Tabs always open their main page, and the highlight follows the tab you're in. */
+    @Test fun tabNavigation() {
+        fun tab(name: String) = compose.onNodeWithContentDescription(name)
+        shoot("18a-nav-workloads", start = "workloads")
+        compose.onAllNodesWithText("linux")[0].performClick()                 // into a guest
+        compose.waitForIdle()
+        tab("Workloads").assertIsSelected()
+        tab("Settings").performClick(); compose.waitForIdle()
+        tab("Settings").assertIsSelected()
+        tab("Workloads").performClick(); compose.waitForIdle()               // back to the list, not the guest
+        compose.onNodeWithText("Search by name", substring = true).assertExists()
+        tab("Workloads").assertIsSelected()
+        tab("Overview").performClick(); compose.waitForIdle()                // Overview, not Hosts
+        compose.onNodeWithText("Needs attention").assertExists()
+        tab("Overview").assertIsSelected()
+        tab("Hosts").assertIsNotSelected()
+    }
     @Test fun guest() {
         // A fake Proxmox API (self-signed cert, pinned) so the detail screen shows real config, graphs and snapshots.
         val cert = okhttp3.tls.HeldCertificate.Builder().commonName("pve2").build()
@@ -151,7 +171,7 @@ class UiSmokeTest {
             }
             compose.waitUntil(10_000) { compose.onAllNodesWithText("2 cores", substring = true).fetchSemanticsNodes().isNotEmpty() }
             // Graph history loads separately from the config; both charts must show data.
-            compose.waitUntil(10_000) { compose.onAllNodesWithText("tap the graph", substring = true).fetchSemanticsNodes().size == 2 }
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("tap for values", substring = true).fetchSemanticsNodes().size == 2 }
             compose.onNodeWithText("Failed", substring = true).assertDoesNotExist()
             val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
             File(outDir, "3-guest.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
