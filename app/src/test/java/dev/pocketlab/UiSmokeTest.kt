@@ -203,8 +203,9 @@ class UiSmokeTest {
         compose.onNodeWithText("Docker in this container").assertExists()
         compose.onNodeWithText("through pve2's SSH", substring = true).assertExists()
         // An LXC's button opens its shell through the node; there's no separate SSH host to offer.
-        compose.onNodeWithText("Shell").assertExists()
-        compose.onNodeWithText("Connect").assertDoesNotExist()
+        // Counted rather than onNodeWithText: the extended FAB can expose its label on more than one node.
+        assertTrue(compose.onAllNodesWithText("Shell").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(compose.onAllNodesWithText("Connect").fetchSemanticsNodes().isEmpty())
     }
 
     /** "Close all connections" asks first instead of acting on tap. */
