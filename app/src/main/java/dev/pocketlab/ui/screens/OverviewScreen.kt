@@ -10,8 +10,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.MonitorHeart
@@ -113,6 +116,9 @@ fun OverviewScreen() {
                         Text("Connect your lab", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text("Add a Proxmox cluster with an API token, and SSH hosts for terminals and Docker. Everything is stored encrypted on this phone and talks to your servers directly; there is no cloud service.",
                             color = t.textDim)
+                        TextButton(onClick = { nav.navigate("guide") }, contentPadding = PaddingValues(0.dp)) {
+                            Icon(Icons.AutoMirrored.Outlined.HelpOutline, null); Text("  How to set up, step by step")
+                        }
                         Button(onClick = { nav.navigate(Routes.editCluster()) }, Modifier.fillMaxWidth()) { Text("Add Proxmox cluster") }
                         OutlinedButton(onClick = { nav.navigate(Routes.editHost()) }, Modifier.fillMaxWidth()) { Text("Add SSH host") }
                     }
@@ -122,7 +128,20 @@ fun OverviewScreen() {
         }
 
         item {
-            SectionTitle("Needs attention")
+            SectionTitle("Needs attention") {
+                TextButton(onClick = { nav.navigate("guide") }) { Text("How to set up"); Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) }
+            }
+            // Proxmox nodes with no SSH host yet: the next setup step, until it's done.
+            val noSsh = cfg.clusters.flatMap { cl -> snap.clusters[cl.id]?.nodes.orEmpty().filter { cfg.nodeHost(cl.id, it.name) == null } }
+            if (noSsh.isNotEmpty()) {
+                LabCard(Modifier.padding(bottom = 10.dp)) {
+                    noSsh.forEachIndexed { i, n ->
+                        if (i > 0) Divider()
+                        NavRow("Now set up SSH for ${n.name}", "Node shell, VM/LXC consoles and Docker in LXCs",
+                            icon = Icons.Outlined.Terminal, onClick = { nav.navigate(Routes.editHost()) })
+                    }
+                }
+            }
             if (attention.isEmpty()) Text("Nothing needs attention right now.", color = t.textDim)
             else LabCard {
                 attention.forEachIndexed { i, a ->

@@ -113,6 +113,10 @@ class UiSmokeTest {
         compose.onNodeWithText("Needs attention").assertExists()
         // pve3 offline + exited(1) container should be flagged.
         assertTrue(compose.onAllNodesWithText("Node offline").fetchSemanticsNodes().isNotEmpty())
+        // pve2 has an SSH host; pve1 and pve3 don't, so Overview offers the next step for them.
+        compose.onNodeWithText("Now set up SSH for pve1").assertExists()
+        compose.onNodeWithText("Now set up SSH for pve2").assertDoesNotExist()
+        compose.onNodeWithText("How to set up").assertExists()
     }
 
     @Test fun workloads() = shoot("2-workloads", start = "workloads")
@@ -302,5 +306,8 @@ class UiSmokeTest {
         lab.setSnapshotForTest(LabSnapshot())
         shoot("0-first-run")
         compose.onNodeWithText("Connect your lab").assertExists()
+        compose.onNodeWithText("How to set up, step by step", substring = true).performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Make an SSH key and install it").assertExists()
     }
 }
