@@ -26,7 +26,7 @@ import java.security.Security
  * Here every implementation is constructed directly, so R8 keeps only these few classes.
  * Everything else (AES, ECDH, RSA, ECDSA, HMAC-SHA2) comes from the platform (Conscrypt).
  */
-class SlimCryptoProvider : @Suppress("DEPRECATION") Provider(NAME, 1.0, "X25519, ChaCha20, Poly1305 for SSH") {
+class SlimCryptoProvider : @Suppress("DEPRECATION") Provider(NAME, 1.0, "X25519, Ed25519, ChaCha20, Poly1305 for SSH") {
     private class Svc(p: Provider, type: String, algorithm: String, aliases: List<String>, private val make: () -> Any) :
         Provider.Service(p, type, algorithm, "dev.pocketlab.ssh.SlimCryptoProvider\$$type\$$algorithm", aliases, null) {
         override fun newInstance(constructorParameter: Any?): Any = make()
@@ -37,6 +37,13 @@ class SlimCryptoProvider : @Suppress("DEPRECATION") Provider(NAME, 1.0, "X25519,
         putService(Svc(this, "KeyPairGenerator", "X25519", listOf("1.3.101.110", "OID.1.3.101.110")) { KeyPairGeneratorSpi.X25519() })
         putService(Svc(this, "KeyFactory", "X25519", listOf("1.3.101.110", "OID.1.3.101.110")) { KeyFactorySpi.X25519() })
         putService(Svc(this, "KeyAgreement", "X25519", listOf("1.3.101.110", "OID.1.3.101.110")) { KeyAgreementSpi.X25519() })
+        // Ed25519 host keys and user keys. Android's Conscrypt has its own Ed25519, but its key objects
+        // report an algorithm name sshj doesn't recognise ("Don't know how to encode key:
+        // OpenSslEdDsaPublicKey"), so SSH to any server with an Ed25519 host key failed. Key factory
+        // and signature come from one provider here, as with X25519.
+        val ed = listOf("EdDSA", "1.3.101.112", "OID.1.3.101.112")
+        putService(Svc(this, "KeyFactory", "Ed25519", ed) { KeyFactorySpi.Ed25519() })
+        putService(Svc(this, "Signature", "Ed25519", ed) { org.bouncycastle.jcajce.provider.asymmetric.edec.SignatureSpi.Ed25519() })
         putService(Svc(this, "Cipher", "CHACHA", emptyList()) { ChaCha.Base() })
         putService(Svc(this, "Mac", "POLY1305", emptyList()) { Poly1305.Mac() })
     }
@@ -47,7 +54,7 @@ class SlimCryptoProvider : @Suppress("DEPRECATION") Provider(NAME, 1.0, "X25519,
         /**
          * Idempotent. Goes first so X25519's key generator, key factory and agreement always come from
          * the same provider (mixing BC keys with Conscrypt's agreement would fail on Android 13+).
-         * It only offers these five algorithms, so nothing else in the process is affected.
+         * It only offers these few algorithms, so nothing else in the process is affected.
          */
         @Synchronized fun install() {
             if (Security.getProvider(NAME) == null) Security.insertProviderAt(SlimCryptoProvider(), 1)

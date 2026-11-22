@@ -38,9 +38,22 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 fun hostKeyFingerprint(key: PublicKey): String {
-    val blob = Buffer.PlainBuffer().putPublicKey(key).compactData
-    val sha = MessageDigest.getInstance("SHA-256").digest(blob)
+    val sha = MessageDigest.getInstance("SHA-256").digest(sshPublicKeyBlob(key))
     return "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(sha)
+}
+
+/**
+ * The key in SSH wire format, as `ssh-keygen -lf` hashes it. Ed25519 is built by hand when sshj
+ * doesn't recognise the key object (some providers name the algorithm differently): its blob is
+ * just "ssh-ed25519" plus the 32 raw key bytes, the tail of the X.509 encoding.
+ */
+internal fun sshPublicKeyBlob(key: PublicKey): ByteArray = try {
+    Buffer.PlainBuffer().putPublicKey(key).compactData
+} catch (e: UnsupportedOperationException) {
+    val enc = key.encoded
+    val ed25519Spki = byteArrayOf(0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70)
+    if (enc == null || enc.size != 44 || !enc.copyOfRange(0, 9).contentEquals(ed25519Spki)) throw e
+    Buffer.PlainBuffer().putString("ssh-ed25519").putBytes(enc.copyOfRange(12, 44)).compactData
 }
 
 /** The server's host key is unknown (first connect) or does not match what we pinned. */
