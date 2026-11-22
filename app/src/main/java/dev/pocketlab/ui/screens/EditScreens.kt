@@ -288,6 +288,8 @@ fun EditHostScreen(id: String?) {
     var dockerSudo by remember { mutableStateOf(existing?.dockerSudo ?: false) }
     var node by remember { mutableStateOf(existing?.proxmoxNode ?: "") }
     var nodeCluster by remember { mutableStateOf(existing?.proxmoxClusterId) }
+    // New hosts get the Proxmox node link picked for them until the user taps a chip.
+    var nodeTouched by remember { mutableStateOf(existing != null) }
     var fp by remember { mutableStateOf(existing?.hostKeyFingerprint) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -304,12 +306,26 @@ fun EditHostScreen(id: String?) {
     // A host key belongs to an address: a changed address/port means a fresh first-use check, not a MITM warning.
     fun effectiveFp(): String? = if (existing != null && fp == existing.hostKeyFingerprint && !sameEndpoint()) null else fp
 
+    /**
+     * The node this host most likely is: a unique node with the same name, or else the only node of a
+     * cluster added at this host's address. (cluster id, node name) or null.
+     */
+    fun autoNode(): Pair<String, String>? {
+        knownNodes.filter { it.second.equals(name.trim(), ignoreCase = true) }.singleOrNull()?.let { return it }
+        val addr = hostAddr().lowercase().ifBlank { return null }
+        val cl = cfg.clusters.firstOrNull { runCatching { java.net.URI(it.baseUrl).host?.lowercase() }.getOrNull() == addr } ?: return null
+        return knownNodes.filter { it.first == cl.id }.singleOrNull()
+    }
+    /** (cluster id, node name) this host is linked to, or null for "not a Proxmox node". */
+    fun linkedNode(): Pair<String?, String>? =
+        if (nodeTouched) node.takeIf { it.isNotBlank() }?.let { nodeCluster to it } else autoNode()
+
     fun build() = SshHost(
         id = existing?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim().ifBlank { hostAddr() },
         address = hostAddr(), port = hostPort(), username = user.trim(), authType = auth,
         password = password.takeIf { auth == SshAuthType.PASSWORD }, keyId = keyId.takeIf { auth == SshAuthType.KEY },
-        hostKeyFingerprint = effectiveFp(), dockerEnabled = docker, dockerSudo = dockerSudo, proxmoxNode = node.trim().ifBlank { null },
-        proxmoxClusterId = nodeCluster.takeIf { node.isNotBlank() },
+        hostKeyFingerprint = effectiveFp(), dockerEnabled = docker, dockerSudo = dockerSudo,
+        proxmoxNode = linkedNode()?.second, proxmoxClusterId = linkedNode()?.first,
     )
 
     fun testAndSave() = scope.launch {
@@ -331,7 +347,7 @@ fun EditHostScreen(id: String?) {
 
     Form(if (existing == null) "Add SSH host" else "Edit ${existing.name}") {
         OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Name") }, singleLine = true)
-        Help("Name it like the Proxmox node or VM it is (e.g. pve1, docker-vm) and Pocketlab links them automatically.")
+        Help("For a VM or LXC, use its Proxmox name (e.g. docker-vm) so its Connect button finds this host.")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(address, { address = it }, Modifier.weight(1f), label = { Text("Address") }, singleLine = true,
                 placeholder = { Text("192.168.1.10") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
@@ -362,15 +378,25 @@ fun EditHostScreen(id: String?) {
             Column(Modifier.weight(1f)) { Text("Use sudo for docker"); Help("Only if the user isn't in the docker group (needs passwordless sudo)") }
             Switch(dockerSudo, { dockerSudo = it })
         }
-        OutlinedTextField(node, { node = it; nodeCluster = null }, Modifier.fillMaxWidth(), label = { Text("Proxmox node (optional)") }, singleLine = true)
-        if (knownNodes.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            knownNodes.forEach { (cid, n) ->
-                val selected = node == n && nodeCluster == cid
-                val label = if (clusterNames.size > 1) "$n · ${clusterNames[cid]}" else n
-                FilterChip(selected, { if (selected) { node = ""; nodeCluster = null } else { node = n; nodeCluster = cid } }, label = { Text(label) })
+        // Which Proxmox node this host is, as a choice instead of a free-text field. A saved link to a
+        // node that isn't loaded right now (cluster offline) still shows as a chip.
+        val linked = linkedNode()
+        val choices = (knownNodes.map { it.first as String? to it.second } +
+            listOfNotNull(existing?.proxmoxNode?.let { existing.proxmoxClusterId to it })).distinct()
+        Text("Proxmox node")
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(linked == null, { nodeTouched = true; node = ""; nodeCluster = null }, label = { Text("None") })
+            choices.forEach { (cid, n) ->
+                val label = if (clusterNames.size > 1 && cid != null) "$n · ${clusterNames[cid]}" else n
+                FilterChip(linked == (cid to n), { nodeTouched = true; node = n; nodeCluster = cid }, label = { Text(label) })
             }
         }
-        Help("Set this if the host is a Proxmox node: enables node shells and VM/LXC consoles (qm terminal / pct enter).")
+        Help(when {
+            linked != null && !nodeTouched -> "Picked because ${if (linked.second.equals(name.trim(), true)) "the name matches" else "the address matches the cluster"}. Linking enables the node shell and VM/LXC consoles."
+            linked != null -> "Linking enables the node shell and VM/LXC consoles (qm terminal / pct enter)."
+            knownNodes.isEmpty() -> "Add a Proxmox cluster first to link a node. Not needed for a plain server or Docker VM."
+            else -> "Pick the node if this host is one; leave None for a VM, LXC or other server."
+        })
         fp?.let { Help("Trusted host key: $it") }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(onClick = { testAndSave() }, enabled = !busy && address.isNotBlank() && user.isNotBlank() &&

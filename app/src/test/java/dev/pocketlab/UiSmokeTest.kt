@@ -210,6 +210,18 @@ class UiSmokeTest {
     }
     @Test fun editCluster() = shoot("9-add-cluster", open = Routes.editCluster())
     @Test fun editHost() = shoot("10-add-host", open = Routes.editHost())
+
+    /** Naming a new host after a node links it automatically; None overrides that. */
+    @Test fun hostNodeLinkPickedAutomatically() {
+        shoot("10a-add-host", open = Routes.editHost())
+        compose.onNodeWithText("Name").performTextReplacement("pve2")
+        compose.onNodeWithText("None").performScrollTo()
+        snap("10b-add-host-node-auto")
+        compose.onAllNodesWithText("pve2")[1].assertIsSelected()          // [0] is the Name field
+        compose.onNodeWithText("Picked because the name matches", substring = true).assertExists()
+        compose.onNodeWithText("None").performClick(); compose.waitForIdle()
+        compose.onNodeWithText("None").assertIsSelected()
+    }
     @Test fun keys() = shoot("11-keys", open = "keys")
     @Test fun logs() = shoot("15-logs", open = Routes.logs("h1", "9b24f266c05f00"))
     @Test fun secretRevealAndCopyCommands() {
