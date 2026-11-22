@@ -140,11 +140,6 @@ fun TermScreen(sessionId: String) {
             Box {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Menu") }
                 DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem({ Text("Paste") }, onClick = {
-                        menu = false
-                        (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).primaryClip?.getItemAt(0)?.coerceToText(ctx)
-                            ?.let { session.emulator.pasteText(it.toString()) }
-                    })
                     DropdownMenuItem({ Text("Larger text") }, onClick = { fontSp = (fontSp + 1).coerceAtMost(28) })
                     DropdownMenuItem({ Text("Smaller text") }, onClick = { fontSp = (fontSp - 1).coerceAtLeast(7) })
                     DropdownMenuItem({ Text("Reconnect") }, onClick = { menu = false; TerminalSessions.reconnect(session) })
@@ -162,6 +157,11 @@ fun TermScreen(sessionId: String) {
                     backgroundColor = t.bg, foregroundColor = t.text,
                     keyboardEnabled = true, showSoftKeyboard = true,
                     modifierManager = mods,
+                    // Paste lives in the selection menu and the keyboard's own paste action.
+                    onPasteRequest = {
+                        (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).primaryClip?.getItemAt(0)?.coerceToText(ctx)
+                            ?.let { session.emulator.pasteText(it.toString()) }
+                    },
                 )
             }
             when (val s = state) {
