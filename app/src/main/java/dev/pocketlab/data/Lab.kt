@@ -131,7 +131,7 @@ class Lab(val store: SecureStore) {
         } catch (e: HostKeyException) {
             return HostState(error = e.message, hostKey = e, loaded = true)
         } catch (e: Exception) {
-            return HostState(error = e.message ?: e.javaClass.simpleName, loaded = true)
+            return HostState(error = dev.pocketlab.ssh.sshErrorMessage(e, h.address, h.port), loaded = true)
         }
         return coroutineScope {
             val stats = async { runCatching { HostStatsProbe.probe(h, keys) }.getOrNull() }

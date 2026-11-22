@@ -56,6 +56,8 @@ import dev.pocketlab.net.untrustedCert
 import dev.pocketlab.proxmox.ProxmoxClient
 import dev.pocketlab.ssh.HostKeyException
 import dev.pocketlab.ssh.SshPool
+import dev.pocketlab.ssh.parseHostAddress
+import dev.pocketlab.ssh.sshErrorMessage
 import dev.pocketlab.ui.LocalNav
 import dev.pocketlab.ui.LocalSnackbar
 import dev.pocketlab.ui.components.TopBar
@@ -294,13 +296,17 @@ fun EditHostScreen(id: String?) {
     val clusterNames = cfg.clusters.associate { it.id to it.name }
     val knownNodes = labSnapshot().clusters.values.flatMap { it.nodes.map { n -> n.clusterId to n.name } }.distinct()
 
-    fun sameEndpoint() = existing != null && existing.address == address.trim() && existing.port == (port.toIntOrNull() ?: 22)
+    // Forgiving address: "http://10.0.0.5", "ssh://root@pve:2222/" and "pve:2222" all work.
+    fun parsed() = parseHostAddress(address)
+    fun hostAddr() = parsed().first
+    fun hostPort() = parsed().second ?: port.toIntOrNull() ?: 22
+    fun sameEndpoint() = existing != null && existing.address == hostAddr() && existing.port == hostPort()
     // A host key belongs to an address: a changed address/port means a fresh first-use check, not a MITM warning.
     fun effectiveFp(): String? = if (existing != null && fp == existing.hostKeyFingerprint && !sameEndpoint()) null else fp
 
     fun build() = SshHost(
-        id = existing?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim().ifBlank { address.trim() },
-        address = address.trim(), port = port.toIntOrNull() ?: 22, username = user.trim(), authType = auth,
+        id = existing?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim().ifBlank { hostAddr() },
+        address = hostAddr(), port = hostPort(), username = user.trim(), authType = auth,
         password = password.takeIf { auth == SshAuthType.PASSWORD }, keyId = keyId.takeIf { auth == SshAuthType.KEY },
         hostKeyFingerprint = effectiveFp(), dockerEnabled = docker, dockerSudo = dockerSudo, proxmoxNode = node.trim().ifBlank { null },
         proxmoxClusterId = nodeCluster.takeIf { node.isNotBlank() },
@@ -319,7 +325,7 @@ fun EditHostScreen(id: String?) {
         } catch (e: HostKeyException) {
             trust = e
         } catch (e: Exception) {
-            error = e.message ?: e.javaClass.simpleName
+            error = sshErrorMessage(e, h.address, h.port)
         } finally { busy = false }
     }
 
@@ -328,7 +334,7 @@ fun EditHostScreen(id: String?) {
         Help("Name it like the Proxmox node or VM it is (e.g. pve1, docker-vm) and Pocketlab links them automatically.")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(address, { address = it }, Modifier.weight(1f), label = { Text("Address") }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
+                placeholder = { Text("192.168.1.10") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
             OutlinedTextField(port, { port = it.filter(Char::isDigit) }, Modifier.weight(0.35f), label = { Text("Port") }, singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
         }

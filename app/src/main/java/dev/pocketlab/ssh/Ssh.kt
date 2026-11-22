@@ -261,5 +261,44 @@ fun generateEd25519(comment: String): Pair<String, String> {
     return pem to pubLine
 }
 
+/**
+ * Host and optional port from whatever was typed: strips a scheme ("http://", "ssh://"), a "user@",
+ * a path, and an IPv6 address's brackets; a trailing ":2222" becomes the port. Bare IPv6 stays whole.
+ */
+fun parseHostAddress(input: String): Pair<String, Int?> {
+    var s = input.trim().substringAfter("://")
+    s = s.substringAfterLast('@').substringBefore('/').trim()
+    if (s.startsWith("[")) {                                   // [fe80::1]:2222
+        val host = s.substringAfter('[').substringBefore(']')
+        return host to s.substringAfter("]:", "").toIntOrNull()?.takeIf { it in 1..65535 }
+    }
+    if (s.count { it == ':' } == 1) {                          // host:port (more colons = bare IPv6)
+        val port = s.substringAfter(':').toIntOrNull()?.takeIf { it in 1..65535 }
+        if (port != null) return s.substringBefore(':') to port
+    }
+    return s to null
+}
+
+/** Plain-language reason an SSH connect or login failed, with what to check. */
+fun sshErrorMessage(e: Throwable, host: String, port: Int): String {
+    var t: Throwable? = e
+    while (t != null) {
+        when (t) {
+            is java.net.UnknownHostException ->
+                return "Can't find \"$host\". Enter just the IP address or hostname, e.g. 192.168.1.10."
+            is java.net.ConnectException ->
+                return "Nothing accepted a connection on $host:$port. Check the address and port, and that SSH is running."
+            is java.net.SocketTimeoutException, is SshTimeoutException ->
+                return "No reply from $host:$port. Check the address, and that the phone is on the same network (or VPN)."
+            is java.net.NoRouteToHostException ->
+                return "Can't reach $host from this phone's network."
+            is net.schmizz.sshj.userauth.UserAuthException ->
+                return "Connected, but the login was refused. Check the username, and that the public key is in ~/.ssh/authorized_keys (or the password is right)."
+        }
+        t = t.cause
+    }
+    return e.message ?: e.javaClass.simpleName
+}
+
 /** Quote a value for a POSIX shell. */
 fun shq(s: String) = "'" + s.replace("'", "'\\''") + "'"

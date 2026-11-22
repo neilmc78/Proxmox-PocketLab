@@ -58,6 +58,22 @@ class Ed25519Test {
         assertEquals(expectedFingerprint(blob), hostKeyFingerprint(foreign))
     }
 
+    @Test fun forgivingHostAddress() {
+        fun p(s: String) = dev.pocketlab.ssh.parseHostAddress(s)
+        assertEquals("192.168.68.10" to null, p("http://192.168.68.10"))
+        assertEquals("192.168.68.10" to null, p(" https://192.168.68.10/ "))
+        assertEquals("pve" to 2222, p("ssh://root@pve:2222"))
+        assertEquals("pve" to 2222, p("pve:2222"))
+        assertEquals("fe80::1" to null, p("fe80::1"))
+        assertEquals("fe80::1" to 2222, p("[fe80::1]:2222"))
+        assertEquals("host" to null, p("host"))
+    }
+
+    @Test fun unknownHostSaysWhatToDo() {
+        val msg = dev.pocketlab.ssh.sshErrorMessage(java.io.IOException(java.net.UnknownHostException("http://x")), "x", 22)
+        assertTrue(msg, msg.contains("Enter just the IP address"))
+    }
+
     @Test fun signAndVerifyRoundTrip() {
         // Keys from another provider (the JDK here, Conscrypt on a phone), re-imported through ours.
         val kp = java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
