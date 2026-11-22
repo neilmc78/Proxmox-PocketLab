@@ -308,7 +308,7 @@ fun KeysScreen() {
             TopBar("SSH keys", onBack = { nav.popBackStack() })
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = { showGen = true }, Modifier.weight(1f)) { Text("Generate Ed25519") }
-                OutlinedButton(onClick = { showImport = true }, Modifier.weight(1f)) { Text("Import") }
+                OutlinedButton(onClick = { showImport = true }, Modifier.weight(1f)) { Text("Import existing") }
             }
             Text("Generate a key here, copy the public key into ~/.ssh/authorized_keys on your servers. The private key never leaves the phone.",
                 color = t.textDim, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 12.dp))
@@ -338,9 +338,12 @@ fun KeysScreen() {
         var name by remember { mutableStateOf("") }
         var priv by remember { mutableStateOf("") }
         var pass by remember { mutableStateOf("") }
-        AlertDialog(onDismissRequest = { showImport = false }, title = { Text("Import private key") },
+        AlertDialog(onDismissRequest = { showImport = false }, title = { Text("Import an existing key") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Only for a login key you already use elsewhere (e.g. your PC's ~/.ssh/id_ed25519) and that's " +
+                        "already in authorized_keys on your servers. Not a server's host key. Otherwise, generate one.",
+                        style = MaterialTheme.typography.bodySmall, color = LocalTones.current.textDim)
                     OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true)
                     OutlinedTextField(priv, { priv = it }, label = { Text("Private key (OpenSSH / PEM)") }, minLines = 4, maxLines = 8,
                         textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),

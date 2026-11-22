@@ -237,8 +237,15 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
             }
         }
         if (g != null) ExtendedFloatingActionButton(
-            onClick = { connectSheet = true }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
-            icon = { Icon(Icons.Outlined.Terminal, null) }, text = { Text("Connect") },
+            onClick = {
+                // An LXC is entered from its node (pct enter): with the node's SSH host set up and no SSH
+                // host of its own, there's nothing to choose, so open the shell straight away.
+                val node = hostForNode(g.clusterId, g.node)
+                if (g.type == GuestType.LXC && node != null && hostForGuest(g.name) == null)
+                    openTerminal(nav, t, "${g.name} shell", node, sudoIfNeeded(node, "pct enter ${g.vmid}"))
+                else connectSheet = true
+            }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
+            icon = { Icon(Icons.Outlined.Terminal, null) }, text = { Text(if (g.type == GuestType.LXC) "Shell" else "Connect") },
             containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
         )
     }
@@ -300,15 +307,19 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
         val nodeHost = hostForNode(g.clusterId, g.node)
         val consoleCmd = if (g.type == GuestType.QEMU) "qm terminal ${g.vmid}" else "pct enter ${g.vmid}"
         LabCard {
-            NavRow("SSH into the ${g.type.label}", guestHost?.let { "${it.username}@${it.address}" } ?: "No SSH host named ${g.name}. Tap to add one.",
-                onClick = {
-                    connectSheet = false
-                    if (guestHost != null) openTerminal(nav, t, g.name, guestHost) else nav.navigate(Routes.editHost())
-                }, trailing = { if (guestHost != null) Icon(Icons.Outlined.Check, null, tint = MaterialTheme.colorScheme.primary) })
-            Divider()
+            // An LXC doesn't need SSH of its own (the node's shell and Docker cover it), so only offer
+            // "SSH into the LXC" when one is already set up. A VM is a separate machine: offer to add one.
+            if (g.type == GuestType.QEMU || guestHost != null) {
+                NavRow("SSH into the ${g.type.label}", guestHost?.let { "${it.username}@${it.address}" } ?: "No SSH host named ${g.name}. Tap to add one.",
+                    onClick = {
+                        connectSheet = false
+                        if (guestHost != null) openTerminal(nav, t, g.name, guestHost) else nav.navigate(Routes.editHost())
+                    }, trailing = { if (guestHost != null) Icon(Icons.Outlined.Check, null, tint = MaterialTheme.colorScheme.primary) })
+                Divider()
+            }
             NavRow(if (g.type == GuestType.QEMU) "Serial console over SSH" else "Container shell over SSH",
                 if (nodeHost != null) "$consoleCmd on ${nodeHost.name}" + (if (g.type == GuestType.QEMU) " · needs serial0 in the VM; exit with Ctrl+O" else "")
-                else "$consoleCmd · no SSH host set up for ${g.node}",
+                else "Needs an SSH host for node ${g.node} first. Tap to add it.",
                 onClick = {
                     connectSheet = false
                     if (nodeHost != null) openTerminal(nav, t, "${g.name} console", nodeHost, sudoIfNeeded(nodeHost, consoleCmd))

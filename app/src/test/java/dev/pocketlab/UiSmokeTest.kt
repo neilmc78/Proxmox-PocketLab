@@ -202,6 +202,9 @@ class UiSmokeTest {
         shoot("20-lxc-docker", open = Routes.guest("c1", "pve2", "lxc", 301))
         compose.onNodeWithText("Docker in this container").assertExists()
         compose.onNodeWithText("through pve2's SSH", substring = true).assertExists()
+        // An LXC's button opens its shell through the node; there's no separate SSH host to offer.
+        compose.onNodeWithText("Shell").assertExists()
+        compose.onNodeWithText("Connect").assertDoesNotExist()
     }
 
     /** "Close all connections" asks first instead of acting on tap. */
