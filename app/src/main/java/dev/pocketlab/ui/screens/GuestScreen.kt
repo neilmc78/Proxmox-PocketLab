@@ -35,7 +35,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.fromHtml
 import androidx.compose.ui.unit.dp
 import dev.pocketlab.proxmox.GuestType
 import dev.pocketlab.proxmox.PveGuest
@@ -418,7 +420,7 @@ private fun NotesRow(notes: String) {
     val links = androidx.compose.ui.text.TextLinkStyles(androidx.compose.ui.text.SpanStyle(
         color = MaterialTheme.colorScheme.primary, textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline))
     val text = remember(notes, links) {
-        val raw = androidx.compose.ui.text.AnnotatedString.fromHtml(notesToHtml(notes), links)
+        val raw = AnnotatedString.fromHtml(notesToHtml(notes), links)
         val start = raw.indexOfFirst { !it.isWhitespace() }
         if (start < 0) null else raw.subSequence(start, raw.indexOfLast { !it.isWhitespace() } + 1)
     }
