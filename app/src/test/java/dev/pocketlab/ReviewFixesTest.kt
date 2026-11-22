@@ -19,6 +19,16 @@ import java.security.KeyStoreException
 import javax.crypto.spec.SecretKeySpec
 
 class ReviewFixesTest {
+    /** The no-guests fix matches the token: the PocketlabPower role for pocketlab@pve, an ACL otherwise. */
+    @Test fun noGuestsHintFitsTheToken() {
+        val own = dev.pocketlab.ui.screens.noGuestsHint("pocketlab@pve!phone")
+        assertTrue(own, own.endsWith("pveum role modify PocketlabPower --append 1 --privs VM.Audit"))
+        val other = dev.pocketlab.ui.screens.noGuestsHint("root@pam!tablet")
+        assertFalse(other, other.contains("PocketlabPower"))
+        assertTrue(other, other.contains("pveum acl modify /vms --tokens 'root@pam!tablet' --roles PVEAuditor"))
+        assertTrue(other, other.contains("pveum acl modify /vms --users 'root@pam' --roles PVEAuditor"))
+    }
+
     /** Docker in an LXC runs through the node's SSH host with pct exec; no host of its own is stored. */
     @Test fun lxcDockerGoesThroughTheNode() {
         val node = SshHost(id = "n", name = "proxmox", address = "192.168.68.10", username = "root", proxmoxNode = "proxmox", dockerEnabled = false)

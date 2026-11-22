@@ -88,8 +88,7 @@ fun WorkloadsScreen(initialFilter: String) {
                 if (st.error != null) ErrorCard(st.error, "Fix" to { nav.navigate(Routes.editCluster(cl.id)) })
                 // Nodes visible but no guests at all almost always means the token lacks VM.Audit on /vms.
                 else if (st.loaded && st.nodes.isNotEmpty() && st.guests.isEmpty())
-                    ErrorCard("No VMs or containers visible. If this node has some, the API token can't see them (it needs VM.Audit on /vms). " +
-                        "Fix in the node Shell: pveum role modify PocketlabPower --append 1 --privs VM.Audit")
+                    ErrorCard(noGuestsHint(cl.tokenId))
             }
             st.nodes.forEach { node ->
                 val ng = visible.filter { it.node == node.name }
@@ -146,6 +145,19 @@ fun WorkloadsScreen(initialFilter: String) {
             }
         }
     }
+}
+
+/**
+ * What to run when a token sees nodes but no guests. For the pocketlab@pve setup it's the missing
+ * VM.Audit in PocketlabPower (older setup commands left it out). For any other token: grant VM.Audit
+ * on /vms to the token itself if it has Privilege Separation (the web UI's default), else to its user.
+ */
+internal fun noGuestsHint(tokenId: String): String {
+    val base = "No VMs or containers visible. If this node has some, the API token can't see them: it needs VM.Audit on /vms. Fix in the node Shell: "
+    if (tokenId.startsWith("$PVE_USER!")) return base + "pveum role modify PocketlabPower --append 1 --privs VM.Audit"
+    val user = tokenId.substringBefore('!')
+    return base + "pveum acl modify /vms --tokens '$tokenId' --roles PVEAuditor " +
+        "(token made in the web UI with Privilege Separation), or pveum acl modify /vms --users '$user' --roles PVEAuditor (without it)."
 }
 
 @Composable
