@@ -94,7 +94,7 @@ fun GuideScreen() {
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Text(body, style = MaterialTheme.typography.bodySmall, color = t.textDim)
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { actions() }
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) { actions() }
             }
         }
     }
