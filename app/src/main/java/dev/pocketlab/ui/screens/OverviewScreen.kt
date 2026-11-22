@@ -154,8 +154,21 @@ fun OverviewScreen() {
 
         item {
             SectionTitle("Hosts") { ViewAll { nav.navigate("hosts") } }
+            // Same order as the Hosts tab: Proxmox clusters first, then SSH hosts.
+            cfg.clusters.forEach { cl ->
+                val st = snap.clusters[cl.id]
+                Text("${cl.name} · Proxmox", style = MaterialTheme.typography.labelLarge, color = t.textDim, modifier = Modifier.padding(top = if (cl == cfg.clusters.first()) 0.dp else 16.dp, bottom = 8.dp))
+                LabCard {
+                    if (st?.nodes.isNullOrEmpty()) Text(if (st?.error != null) st.error else "Loading…", Modifier.padding(16.dp), color = t.textDim)
+                    st?.nodes?.forEachIndexed { i, n ->
+                        if (i > 0) Divider()
+                        HostRow(n.name, if (n.online) Health.OK else Health.BAD, if (n.online) "Online" else "Offline",
+                            n.cpu.toFloat(), n.mem.toFloat() / n.maxMem.coerceAtLeast(1)) { nav.navigate(Routes.node(cl.id, n.name)) }
+                    }
+                }
+            }
             if (cfg.hosts.isNotEmpty()) {
-                Text("SSH hosts", style = MaterialTheme.typography.labelLarge, color = t.textDim, modifier = Modifier.padding(bottom = 8.dp))
+                Text("SSH hosts", style = MaterialTheme.typography.labelLarge, color = t.textDim, modifier = Modifier.padding(top = if (cfg.clusters.isEmpty()) 0.dp else 16.dp, bottom = 8.dp))
                 LabCard {
                     cfg.hosts.forEachIndexed { i, h ->
                         if (i > 0) Divider()
@@ -163,18 +176,6 @@ fun OverviewScreen() {
                         val health = when { st == null || !st.loaded || st.promptOnly -> Health.OFF; st.error != null -> Health.BAD; else -> Health.OK }
                         HostRow(h.name, health, when { st == null || !st.loaded -> "Connecting…"; st.promptOnly -> "Password on connect"; st.error != null -> "Unreachable"; else -> "Connected" },
                             st?.stats?.cpu?.toFloat(), st?.stats?.memFraction?.toFloat()) { nav.navigate(Routes.host(h.id)) }
-                    }
-                }
-            }
-            cfg.clusters.forEach { cl ->
-                val st = snap.clusters[cl.id]
-                Text("${cl.name} · Proxmox", style = MaterialTheme.typography.labelLarge, color = t.textDim, modifier = Modifier.padding(top = 16.dp, bottom = 8.dp))
-                LabCard {
-                    if (st?.nodes.isNullOrEmpty()) Text(if (st?.error != null) st.error else "Loading…", Modifier.padding(16.dp), color = t.textDim)
-                    st?.nodes?.forEachIndexed { i, n ->
-                        if (i > 0) Divider()
-                        HostRow(n.name, if (n.online) Health.OK else Health.BAD, if (n.online) "Online" else "Offline",
-                            n.cpu.toFloat(), n.mem.toFloat() / n.maxMem.coerceAtLeast(1)) { nav.navigate(Routes.node(cl.id, n.name)) }
                     }
                 }
             }

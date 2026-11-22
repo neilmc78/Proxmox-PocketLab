@@ -19,6 +19,17 @@ import java.security.KeyStoreException
 import javax.crypto.spec.SecretKeySpec
 
 class ReviewFixesTest {
+    /** Guest notes: HTML passes through untouched; Markdown becomes simple HTML with line breaks kept. */
+    @Test fun notesToHtml() {
+        val html = "<div align='center'><h2>Overseerr LXC</h2></div>"
+        assertEquals(html, dev.pocketlab.ui.screens.notesToHtml(html))
+        val md = dev.pocketlab.ui.screens.notesToHtml("# Media\n**Port** 5055 and *fast*\n- [Docs](https://docs.example.com)\n1 < 2 `code`")
+        assertTrue(md, md.contains("<b><big>Media</big></b><br>"))
+        assertTrue(md, md.contains("<b>Port</b> 5055 and <i>fast</i>"))
+        assertTrue(md, md.contains("• <a href=\"https://docs.example.com\">Docs</a>"))
+        assertTrue(md, md.contains("1 &lt; 2 <tt>code</tt>"))                        // plain text is escaped
+    }
+
     /** Installing the phone's key in an LXC: user and key are arguments, never part of the script. */
     @Test fun lxcInstallKeyCommandIsSafe() {
         val key = "ssh-ed25519 AAAAC3Nza phone's key"

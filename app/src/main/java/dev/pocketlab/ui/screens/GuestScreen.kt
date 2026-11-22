@@ -220,7 +220,7 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
                         val rows = summarizeConfig(cfg, g?.type ?: GuestType.QEMU)
                         rows.forEachIndexed { i, (k, v) ->
                             if (i > 0) Divider()
-                            KeyValueRow(k, v)
+                            if (k == "Notes") NotesRow(v) else KeyValueRow(k, v)
                         }
                     }
                 }
@@ -405,6 +405,49 @@ private fun InstallKeySheet(g: PveGuest, nodeHost: dev.pocketlab.data.SshHost?, 
                 busy = false
             }
         }) { Text(if (busy) "Installing…" else "Install for ${user.ifBlank { "…" }}") }
+    }
+}
+
+/**
+ * Proxmox notes, rendered the way the web UI does: Markdown, with HTML allowed (community-scripts LXCs
+ * write HTML). Links open in the browser; images aren't loaded (the app never fetches web content).
+ */
+@Composable
+private fun NotesRow(notes: String) {
+    val t = LocalTones.current
+    val links = androidx.compose.ui.text.TextLinkStyles(androidx.compose.ui.text.SpanStyle(
+        color = MaterialTheme.colorScheme.primary, textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline))
+    val text = remember(notes, links) {
+        val raw = androidx.compose.ui.text.AnnotatedString.fromHtml(notesToHtml(notes), links)
+        val start = raw.indexOfFirst { !it.isWhitespace() }
+        if (start < 0) null else raw.subSequence(start, raw.indexOfLast { !it.isWhitespace() } + 1)
+    }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
+        Text("Notes", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        if (text == null) Text("Only images, which Pocketlab doesn't load.", color = t.textDim, style = MaterialTheme.typography.bodyMedium)
+        else Text(text, color = t.textDim, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/**
+ * Notes to HTML: kept as-is if they already contain HTML tags; otherwise light Markdown (headings,
+ * bold, italic, inline code, links, list bullets) with line breaks kept.
+ */
+internal fun notesToHtml(notes: String): String {
+    if (Regex("<\\s*/?\\s*[a-zA-Z][^>]*>").containsMatchIn(notes)) return notes
+    fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    fun inline(s: String) = esc(s)
+        .replace(Regex("\\[([^\\]]+)]\\((https?://[^)\\s]+)\\)"), "<a href=\"$2\">$1</a>")
+        .replace(Regex("\\*\\*(.+?)\\*\\*"), "<b>$1</b>")
+        .replace(Regex("(?<![*\\w])\\*(?!\\s)(.+?)(?<!\\s)\\*(?![*\\w])"), "<i>$1</i>")
+        .replace(Regex("`([^`]+)`"), "<tt>$1</tt>")
+    return notes.lines().joinToString("<br>") { line ->
+        val h = Regex("^(#{1,6})\\s+(.*)$").find(line)
+        when {
+            h != null -> "<b><big>${inline(h.groupValues[2])}</big></b>"
+            Regex("^\\s*[-*]\\s+").containsMatchIn(line) -> "• " + inline(line.replaceFirst(Regex("^\\s*[-*]\\s+"), ""))
+            else -> inline(line)
+        }
     }
 }
 
