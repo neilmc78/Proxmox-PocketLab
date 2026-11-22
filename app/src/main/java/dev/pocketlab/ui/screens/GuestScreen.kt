@@ -318,7 +318,7 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
                     connectSheet = false
                     if (guestHost != null) openTerminal(nav, t, g.name, guestHost)
                     else nav.navigate(Routes.editHost(name = g.name, address = staticIp))
-                }, trailing = { if (guestHost != null) Icon(Icons.Outlined.Check, null, tint = MaterialTheme.colorScheme.primary) })
+                }, trailing = if (guestHost != null) ({ Icon(Icons.Outlined.Check, null, tint = MaterialTheme.colorScheme.primary) }) else null)
             if (g.type == GuestType.QEMU) { Divider(); ConsoleRow(g, nodeHost, consoleCmd) { connectSheet = false } }
             if (g.type == GuestType.LXC && nodeHost != null) {
                 Divider()
