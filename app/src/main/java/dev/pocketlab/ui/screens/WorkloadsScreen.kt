@@ -68,13 +68,13 @@ fun WorkloadsScreen(initialFilter: String) {
                 shape = RoundedCornerShape(16.dp),
             )
             Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("All", "VM", "LXC", "Container").forEach { f ->
+                listOf("All", "VM", "LXC", "Docker").forEach { f ->
                     FilterChip(selected = filter == f, onClick = { filter = f }, label = { Text(f) })
                 }
             }
         }
 
-        if (filter != "Container") cfg.clusters.forEach { cl ->
+        if (filter != "Docker") cfg.clusters.forEach { cl ->
             val st = snap.clusters[cl.id] ?: return@forEach
             val visible = st.guests.filter(::guestMatches)
             item(key = "cl-${cl.id}") {
@@ -86,6 +86,10 @@ fun WorkloadsScreen(initialFilter: String) {
                 Text("Proxmox · ${cl.baseUrl.removePrefix("https://").substringBefore('/')}", color = t.textDim,
                     style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(bottom = 10.dp))
                 if (st.error != null) ErrorCard(st.error, "Fix" to { nav.navigate(Routes.editCluster(cl.id)) })
+                // Nodes visible but no guests at all almost always means the token lacks VM.Audit on /vms.
+                else if (st.loaded && st.nodes.isNotEmpty() && st.guests.isEmpty())
+                    ErrorCard("No VMs or containers visible. If this node has some, the API token can't see them (it needs VM.Audit on /vms). " +
+                        "Fix in the node Shell: pveum role modify PocketlabPower --append 1 --privs VM.Audit")
             }
             st.nodes.forEach { node ->
                 val ng = visible.filter { it.node == node.name }
@@ -115,7 +119,7 @@ fun WorkloadsScreen(initialFilter: String) {
             }
         }
 
-        if (filter == "All" || filter == "Container") cfg.hosts.filter { it.dockerEnabled }.forEach { h ->
+        if (filter == "All" || filter == "Docker") cfg.hosts.filter { it.dockerEnabled }.forEach { h ->
             val st = snap.hosts[h.id] ?: return@forEach
             val cs = st.containers.filter { c ->
                 q.isEmpty() || c.name.lowercase().contains(q) || c.image.lowercase().contains(q) || (c.composeProject?.lowercase()?.contains(q) == true)

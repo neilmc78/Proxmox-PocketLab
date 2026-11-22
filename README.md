@@ -45,7 +45,7 @@ On any node:
 ```sh
 pveum user add pocketlab@pve
 pveum acl modify / --users pocketlab@pve --roles PVEAuditor
-pveum role add PocketlabPower --privs "VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback"
+pveum role add PocketlabPower --privs "VM.Audit VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback"
 pveum acl modify /vms --users pocketlab@pve --roles PocketlabPower
 pveum user token add pocketlab@pve phone --privsep 0
 ```

@@ -66,6 +66,7 @@ import dev.pocketlab.ui.theme.Tones
 import dev.pocketlab.ui.theme.isDark
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.collectAsState
 
 @Composable
 fun SettingsScreen() {
@@ -74,6 +75,10 @@ fun SettingsScreen() {
     val snackbar = LocalSnackbar.current
     val scope = rememberCoroutineScope()
     val cfg = labConfig()
+    val ctx = LocalContext.current
+    val sessions by dev.pocketlab.ssh.TerminalSessions.sessions.collectAsState()
+    var confirmClose by remember { mutableStateOf(false) }
+    val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?" }
     RefreshList(onRefresh = {}) {
         item {
             Text("Settings", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 20.dp, bottom = 16.dp))
@@ -83,9 +88,10 @@ fun SettingsScreen() {
                 Divider()
                 NavRow("SSH keys", "${cfg.keys.size} stored", icon = Icons.Outlined.Key, onClick = { nav.navigate("keys") })
                 Divider()
-                NavRow("Disconnect everything", "Closes pooled SSH connections", icon = Icons.Outlined.LinkOff, onClick = {
-                    lab.forgetConnections(); scope.launch { snackbar.showSnackbar("Disconnected") }
-                })
+                // An action, not a screen: no chevron, and it asks first.
+                NavRow("Close all connections",
+                    if (sessions.isEmpty()) "Closes background SSH connections" else "Ends ${sessions.size} terminal session(s) and closes SSH connections",
+                    icon = Icons.Outlined.LinkOff, onClick = { confirmClose = true }, trailing = {})
             }
             SectionTitle("Security")
             LabCard {
@@ -100,10 +106,21 @@ fun SettingsScreen() {
                 }
             }
             SectionTitle("About")
-            Text("Pocketlab 0.2.0 · open source, built for you.", color = t.textDim)
+            Text("Pocketlab $version · open source, built for you.", color = t.textDim)
             Text("Terminal: ConnectBot termlib (Apache 2.0) · SSH: sshj (Apache 2.0)", color = t.textDim, style = MaterialTheme.typography.bodySmall)
         }
     }
+    if (confirmClose) AlertDialog(onDismissRequest = { confirmClose = false },
+        title = { Text("Close all connections?") },
+        text = { Text((if (sessions.isEmpty()) "" else "This ends ${sessions.size} open terminal session(s); anything running in them in the foreground stops. ") +
+            "Background connections reopen on the next refresh.") },
+        confirmButton = { TextButton(onClick = {
+            confirmClose = false
+            sessions.forEach { dev.pocketlab.ssh.TerminalSessions.close(it.id) }
+            lab.forgetConnections()
+            scope.launch { snackbar.showSnackbar("All connections closed") }
+        }) { Text("Close all", color = MaterialTheme.colorScheme.error) } },
+        dismissButton = { TextButton(onClick = { confirmClose = false }) { Text("Cancel") } })
 }
 
 @Composable

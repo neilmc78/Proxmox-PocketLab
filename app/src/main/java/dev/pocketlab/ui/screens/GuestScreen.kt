@@ -49,7 +49,7 @@ import dev.pocketlab.ui.components.LabCard
 import dev.pocketlab.ui.components.NavRow
 import dev.pocketlab.ui.components.SectionTitle
 import dev.pocketlab.ui.components.Sheet
-import dev.pocketlab.ui.components.Sparkline
+import dev.pocketlab.ui.components.TimeChart
 import dev.pocketlab.ui.components.StatusLabel
 import dev.pocketlab.ui.components.bytes
 import dev.pocketlab.ui.components.pct
@@ -94,7 +94,10 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
     var qmpPaused by remember { mutableStateOf(false) }
     val g = listed?.let { if (qmpPaused && it.running) it.copy(status = "paused") else it }
     var config by remember { mutableStateOf<Map<String, String>?>(null) }
-    var rrd by remember { mutableStateOf<List<RrdPoint>>(emptyList()) }
+    val rrd = rememberLiveRrd(clusterId, node, type, vmid) {
+        lab.snapshot.value.clusters[clusterId]?.guests?.firstOrNull { it.vmid == vmid && it.type.api == type }
+            ?.let { lab.client(clusterId)?.rrd(it) }
+    }
     var snaps by remember { mutableStateOf<List<Snapshot>?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
@@ -109,7 +112,6 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
         try {
             qmpPaused = runCatching { c.withLiveStatus(guest).status == "paused" }.getOrDefault(false)
             config = c.config(guest)
-            rrd = runCatching { c.rrd(guest) }.getOrDefault(emptyList())
             snaps = runCatching { c.snapshots(guest) }.getOrNull()
             loadError = null
         } catch (e: Exception) { loadError = e.message }
@@ -148,9 +150,13 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
                 LabCard { NavRow("Power and actions", actionsFor(g).joinToString(", ") { it.label }, onClick = { powerSheet = true }) }
                 Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    MetricCard("CPU", if (g.running) pct(g.cpu) else "–", rrd.mapNotNull { it.cpu }, 1.0, Modifier.weight(1f))
-                    val memSeries = rrd.mapNotNull { p -> p.mem?.let { m -> p.maxMem?.takeIf { it > 0 }?.let { m / it } } }
-                    MetricCard("Memory", if (g.running) pct(g.mem.toDouble() / g.maxMem.coerceAtLeast(1)) else "–", memSeries, 1.0, Modifier.weight(1f))
+                    val now = System.currentTimeMillis() / 1000
+                    val memFrac = g.mem.toDouble() / g.maxMem.coerceAtLeast(1)
+                    val cpu = liveSeries(rrd, now, g.cpu.takeIf { g.running }) { it.cpu }
+                    val mem = liveSeries(rrd, now, memFrac.takeIf { g.running }) { p -> p.mem?.let { m -> p.maxMem?.takeIf { it > 0 }?.let { m / it } } }
+                    MetricCard("CPU", if (g.running) pct(g.cpu) else "–", cpu, { pct(cpu.second[it]) }, Modifier.weight(1f))
+                    MetricCard("Memory", if (g.running) pct(memFrac) else "–", mem,
+                        { "${pct(mem.second[it])} · ${bytes((mem.second[it] * g.maxMem).toLong())}" }, Modifier.weight(1f))
                 }
                 if (g.type == GuestType.QEMU && g.running && g.maxMem > 0 && g.mem >= g.maxMem * 0.99)
                     Text("Memory at 100% usually means the QEMU guest agent / ballooning isn't reporting; Proxmox then counts all assigned RAM as used.",
@@ -268,15 +274,14 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
 }
 
 @Composable
-private fun MetricCard(label: String, value: String, series: List<Double>, max: Double?, modifier: Modifier) {
+private fun MetricCard(label: String, value: String, series: Pair<List<Long>, List<Double>>, describe: (Int) -> String, modifier: Modifier) {
     val t = LocalTones.current
     LabCard(modifier) {
         Column(Modifier.padding(16.dp)) {
             Text(label, color = t.textDim, style = MaterialTheme.typography.bodyMedium)
             Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
-            Sparkline(series, Modifier.fillMaxWidth().height(36.dp), max = max)
-            Text("Last hour", color = t.textDim, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+            Spacer(Modifier.height(6.dp))
+            TimeChart(series.first, series.second, describe, "Last hour", Modifier.fillMaxWidth(), height = 48.dp, max = 1.0)
         }
     }
 }

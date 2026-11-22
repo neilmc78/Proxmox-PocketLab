@@ -160,7 +160,7 @@ fun OverviewScreen() {
         }
 
         if (containers.isNotEmpty()) item {
-            SectionTitle("Services") { ViewAll { nav.navigate(Routes.workloads("Container")) } }
+            SectionTitle("Services") { ViewAll { nav.navigate(Routes.workloads("Docker")) } }
             LabCard {
                 val shown = containers.sortedBy { it.healthState().ordinal }.take(6)
                 shown.forEachIndexed { i, c ->

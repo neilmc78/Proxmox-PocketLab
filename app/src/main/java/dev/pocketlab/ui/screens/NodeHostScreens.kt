@@ -34,14 +34,49 @@ import dev.pocketlab.ui.components.Health
 import dev.pocketlab.ui.components.KeyValueRow
 import dev.pocketlab.ui.components.LabCard
 import dev.pocketlab.ui.components.SectionTitle
-import dev.pocketlab.ui.components.Sparkline
 import dev.pocketlab.ui.components.StatusLabel
+import dev.pocketlab.ui.components.TimeChart
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import dev.pocketlab.ui.components.TopBar
 import dev.pocketlab.ui.components.TrustDialog
 import dev.pocketlab.ui.components.bytes
 import dev.pocketlab.ui.components.pct
 import dev.pocketlab.ui.components.uptime
 import dev.pocketlab.ui.theme.LocalTones
+
+/**
+ * Proxmox RRD history for a screen, refetched every minute (the "hour" series has one point per
+ * minute) while the app is in the foreground, so the graph moves with time.
+ */
+@Composable
+internal fun rememberLiveRrd(vararg keys: Any?, fetch: suspend () -> List<RrdPoint>?): List<RrdPoint> {
+    var rrd by remember(*keys) { mutableStateOf<List<RrdPoint>>(emptyList()) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val live = dev.pocketlab.ui.LocalLivePolling.current
+    LaunchedEffect(*keys) {
+        if (!live) { runCatching { fetch() }.getOrNull()?.let { rrd = it }; return@LaunchedEffect }
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                runCatching { fetch() }.getOrNull()?.let { rrd = it }
+                delay(60_000)
+            }
+        }
+    }
+    return rrd
+}
+
+/**
+ * Times and values from [rrd] via [pick], plus the live value from the 15 s poll as the newest point
+ * when it's newer than the last RRD sample, so the right-hand end tracks what's happening now.
+ */
+internal fun liveSeries(rrd: List<RrdPoint>, now: Long, live: Double?, pick: (RrdPoint) -> Double?): Pair<List<Long>, List<Double>> {
+    val pts = rrd.mapNotNull { p -> pick(p)?.let { p.time to it } }.toMutableList()
+    if (live != null && (pts.lastOrNull()?.first ?: 0) < now - 15) pts += now to live
+    return pts.map { it.first } to pts.map { it.second }
+}
 
 @Composable
 fun NodeScreen(clusterId: String, nodeName: String) {
@@ -50,8 +85,7 @@ fun NodeScreen(clusterId: String, nodeName: String) {
     val st = labSnapshot().clusters[clusterId]
     val node = st?.nodes?.firstOrNull { it.name == nodeName }
     val guests = st?.guests?.filter { it.node == nodeName }.orEmpty()
-    var rrd by remember { mutableStateOf<List<RrdPoint>>(emptyList()) }
-    LaunchedEffect(nodeName) { rrd = runCatching { lab.client(clusterId)!!.nodeRrd(nodeName) }.getOrDefault(emptyList()) }
+    val rrd = rememberLiveRrd(clusterId, nodeName) { lab.client(clusterId)?.nodeRrd(nodeName) }
     val sshHost = hostForNode(clusterId, nodeName)
 
     RefreshList(onRefresh = { lab.refreshCluster(clusterId) }) {
@@ -63,12 +97,16 @@ fun NodeScreen(clusterId: String, nodeName: String) {
             Spacer(Modifier.height(8.dp))
             LabCard {
                 Column(Modifier.padding(16.dp)) {
+                    val now = System.currentTimeMillis() / 1000
+                    val memFrac = node.mem.toDouble() / node.maxMem.coerceAtLeast(1)
+                    val cpu = liveSeries(rrd, now, node.cpu) { it.cpu }
+                    val mem = liveSeries(rrd, now, memFrac) { p -> p.mem?.let { m -> p.maxMem?.takeIf { it > 0 }?.let { m / it } } }
                     Text("CPU ${pct(node.cpu)}", fontWeight = FontWeight.Bold)
-                    Sparkline(rrd.mapNotNull { it.cpu }, Modifier.fillMaxWidth().height(40.dp).padding(vertical = 6.dp), max = 1.0)
-                    Text("Memory ${pct(node.mem.toDouble() / node.maxMem.coerceAtLeast(1))} · ${bytes(node.mem)} of ${bytes(node.maxMem)}", fontWeight = FontWeight.Bold)
-                    Sparkline(rrd.mapNotNull { p -> p.mem?.let { m -> p.maxMem?.takeIf { it > 0 }?.let { m / it } } },
-                        Modifier.fillMaxWidth().height(40.dp).padding(vertical = 6.dp), max = 1.0)
-                    Text("Last hour", color = t.textDim, style = MaterialTheme.typography.bodySmall)
+                    TimeChart(cpu.first, cpu.second, { pct(cpu.second[it]) }, "Last hour", Modifier.fillMaxWidth(), height = 56.dp, max = 1.0)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Memory ${pct(memFrac)} · ${bytes(node.mem)} of ${bytes(node.maxMem)}", fontWeight = FontWeight.Bold)
+                    TimeChart(mem.first, mem.second, { "${pct(mem.second[it])} · ${bytes((mem.second[it] * node.maxMem).toLong())}" },
+                        "Last hour", Modifier.fillMaxWidth(), height = 56.dp, max = 1.0)
                 }
             }
             Spacer(Modifier.height(12.dp))

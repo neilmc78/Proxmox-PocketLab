@@ -159,6 +159,25 @@ class UiSmokeTest {
     @Test fun hosts() = shoot("5-hosts", start = "hosts")
     @Test fun terminalTab() = shoot("6-terminal", start = "terminal")
     @Test fun settings() = shoot("7-settings", start = "settings")
+
+    /** "Close all connections" asks first instead of acting on tap. */
+    @Test fun closeConnectionsAsksFirst() {
+        shoot("7a-settings", start = "settings")
+        compose.onNodeWithText("Close all connections").performClick()
+        snap("7b-settings-close-confirm")
+        compose.onNodeWithText("Close all connections?").assertExists()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Close all connections?").assertDoesNotExist()
+    }
+
+    /** Token sees the node but no guests (missing VM.Audit on /vms): say so and how to fix it. */
+    @Test fun noGuestsVisibleHint() {
+        val s = lab.snapshot.value
+        lab.setSnapshotForTest(s.copy(clusters = s.clusters.mapValues { (_, c) -> c.copy(guests = emptyList()) }))
+        shoot("2b-workloads-no-guests", start = "workloads")
+        compose.onNodeWithText("No VMs or containers visible", substring = true).assertExists()
+    }
     @Test fun appearance() = shoot("8-appearance", open = "appearance")
     /** Small phone: the accent swatches must stay round, not get squeezed. */
     @Config(qualifiers = "w320dp-h700dp-xhdpi")

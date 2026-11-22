@@ -123,7 +123,9 @@ fun splitTokenId(id: String): Pair<String, String>? {
 fun pveTokenSetup(user: String, tokenName: String) = buildList {
     if (user.endsWith("@pve")) add("pveum user add $user")
     add("pveum acl modify / --users $user --roles PVEAuditor")
-    add("pveum role add PocketlabPower --privs \"VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback\"")
+    // VM.Audit too: an ACL on /vms replaces (not adds to) the PVEAuditor role inherited from /, so
+    // without it the token can power VMs it can no longer see.
+    add("pveum role add PocketlabPower --privs \"VM.Audit VM.PowerMgmt VM.Snapshot VM.Snapshot.Rollback\"")
     add("pveum acl modify /vms --users $user --roles PocketlabPower")
     add("pveum user token add $user $tokenName --privsep 0")
 }.joinToString("\n")

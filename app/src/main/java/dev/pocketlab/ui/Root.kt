@@ -35,8 +35,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,6 +80,8 @@ import kotlinx.coroutines.delay
 
 val LocalNav = staticCompositionLocalOf<NavHostController> { error("no nav") }
 val LocalSnackbar = staticCompositionLocalOf<SnackbarHostState> { error("no snackbar") }
+/** False in UI tests (PocketlabRoot(poll = false)): screens fetch once instead of polling forever. */
+val LocalLivePolling = staticCompositionLocalOf { true }
 
 object Routes {
     fun enc(s: String): String = Uri.encode(s)
@@ -123,8 +128,15 @@ fun PocketlabRoot(startRoute: String = "overview", poll: Boolean = true, openRou
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route.orEmpty()
     val showBar = !route.startsWith("term/") && !route.startsWith("edit-") && route != "keys"
+    // The highlighted tab is the one you're in: the last tab root you visited. Detail screens keep it,
+    // so a VM opened from Overview leaves Overview highlighted instead of jumping to Workloads.
+    // Held here (not in the bar) so it survives screens that hide the bar.
+    var lastTab by remember { mutableStateOf("overview") }
+    val tabHere = tabs.firstOrNull { route == it.route || route.startsWith(it.route + "?") }?.route
+    val currentTab = tabHere ?: lastTab
+    SideEffect { if (tabHere != null) lastTab = tabHere }
 
-    CompositionLocalProvider(LocalNav provides nav, LocalSnackbar provides snackbar) {
+    CompositionLocalProvider(LocalNav provides nav, LocalSnackbar provides snackbar, LocalLivePolling provides poll) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
             Column(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -149,7 +161,7 @@ fun PocketlabRoot(startRoute: String = "overview", poll: Boolean = true, openRou
                     composable("edit-host?id={id}") { EditHostScreen(it.arguments?.getString("id")?.ifBlank { null }) }
                     composable("edit-cluster?id={id}") { EditClusterScreen(it.arguments?.getString("id")?.ifBlank { null }) }
                 }
-                if (showBar) BottomBar(nav, route)
+                if (showBar) BottomBar(nav, currentTab)
             }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 100.dp))
         }
@@ -160,15 +172,9 @@ fun PocketlabRoot(startRoute: String = "overview", poll: Boolean = true, openRou
 private fun OverviewArg(filter: String?) = WorkloadsScreen(filter ?: "All")
 
 @Composable
-private fun BottomBar(nav: NavHostController, route: String) {
+private fun BottomBar(nav: NavHostController, current: String) {
     val t = LocalTones.current
-    val current = when {
-        route.startsWith("overview") -> "overview"
-        route.startsWith("hosts") || route.startsWith("host/") || route.startsWith("node/") -> "hosts"
-        route.startsWith("workloads") || route.startsWith("guest/") || route.startsWith("container/") || route.startsWith("logs/") -> "workloads"
-        route.startsWith("terminal") -> "terminal"
-        else -> "settings"
-    }
+
     // One label size for all tabs: the largest (up to labelMedium) at which the longest label fits a
     // tab's width, so narrow phones get slightly smaller labels instead of clipped ones.
     val labelStyle = MaterialTheme.typography.labelMedium
