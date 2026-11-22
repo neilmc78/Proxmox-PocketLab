@@ -150,6 +150,8 @@ class UiSmokeTest {
                 PocketlabTheme(cfg.appearance) { PocketlabRoot(poll = false, openRoute = Routes.guest("c1", "pve2", "qemu", 202)) }
             }
             compose.waitUntil(10_000) { compose.onAllNodesWithText("2 cores", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            // Graph history loads separately from the config; both charts must show data.
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("tap the graph", substring = true).fetchSemanticsNodes().size == 2 }
             compose.onNodeWithText("Failed", substring = true).assertDoesNotExist()
             val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
             File(outDir, "3-guest.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
