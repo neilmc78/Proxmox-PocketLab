@@ -188,7 +188,8 @@ fun TermScreen(sessionId: String) {
 private fun trustHostAndReopen(nav: androidx.navigation.NavHostController, s: TerminalSession, fp: String, t: dev.pocketlab.ui.theme.Tones) {
     lab.store.update { c -> c.copy(hosts = c.hosts.map { if (it.id == s.host.id) it.copy(hostKeyFingerprint = fp) else it }) }
     lab.forgetConnections()
-    val updated = lab.host(s.host.id) ?: return
+    // Keep a password typed for an "ask each time" host so trusting the key doesn't ask again.
+    val updated = lab.host(s.host.id)?.let { if (it.password == null) it.copy(password = s.host.password) else it } ?: return
     TerminalSessions.close(s.id)
     nav.popBackStack()
     openTerminal(nav, t, s.title, updated, s.command)

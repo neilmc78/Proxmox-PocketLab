@@ -19,6 +19,34 @@ import java.security.KeyStoreException
 import javax.crypto.spec.SecretKeySpec
 
 class ReviewFixesTest {
+    /** Installing the phone's key in an LXC: user and key are arguments, never part of the script. */
+    @Test fun lxcInstallKeyCommandIsSafe() {
+        val key = "ssh-ed25519 AAAAC3Nza phone's key"
+        val cmd = dev.pocketlab.ssh.lxcInstallKeyCommand(117, "root", key, sudo = false)
+        assertTrue(cmd, cmd.startsWith("pct exec 117 -- sh -c '"))
+        assertTrue(cmd, cmd.endsWith(" sh 'root' 'ssh-ed25519 AAAAC3Nza phone'\\''s key'"))
+        assertTrue(dev.pocketlab.ssh.lxcInstallKeyCommand(117, "neil", key, sudo = true).startsWith("sudo -n pct exec 117"))
+        for (bad in listOf("root; rm -rf /", "Neil", "", "a b", "\$(id)")) {
+            assertTrue(bad, runCatching { dev.pocketlab.ssh.lxcInstallKeyCommand(117, bad, key, false) }.isFailure)
+        }
+    }
+
+    /** The install script itself, run against a throwaway home: creates ~/.ssh, adds the key once. */
+    @Test fun lxcInstallKeyScriptWorks() {
+        // Run as the current user (chown to someone else would need root) against a fake passwd.
+        val me = System.getProperty("user.name")
+        val home = File(dir, "home").apply { mkdirs() }
+        val passwd = File(dir, "passwd").apply { writeText("$me:x:1000:1000::${home.path}:/bin/sh\n") }
+        val script = dev.pocketlab.ssh.installKeyScript(passwd.path)
+        fun run(user: String): Int {
+            val p = ProcessBuilder("sh", "-c", script, "sh", user, "ssh-ed25519 AAAA k").redirectErrorStream(true).start()
+            p.inputStream.readBytes(); return p.waitFor()
+        }
+        assertEquals(0, run(me)); assertEquals(0, run(me))
+        assertEquals(listOf("ssh-ed25519 AAAA k"), File(home, ".ssh/authorized_keys").readLines())   // added once, not twice
+        assertEquals(3, run("nobodyhere"))                                                          // unknown user: refused
+    }
+
     /** The no-guests fix matches the token: the PocketlabPower role for pocketlab@pve, an ACL otherwise. */
     @Test fun noGuestsHintFitsTheToken() {
         val own = dev.pocketlab.ui.screens.noGuestsHint("pocketlab@pve!phone")

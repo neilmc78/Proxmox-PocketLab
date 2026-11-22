@@ -112,7 +112,18 @@ object SshPool {
         }
         try {
             when (host.authType) {
-                SshAuthType.PASSWORD -> c.authPassword(host.username, host.password.orEmpty())
+                SshAuthType.PASSWORD, SshAuthType.PROMPT -> {
+                    // PROMPT hosts get the password typed just before connecting (never stored).
+                    val pw = host.password ?: throw IOException("${host.name} asks for its password each time; none was given")
+                    // "password" and keyboard-interactive: many servers (PAM) only offer the latter.
+                    val finder = object : net.schmizz.sshj.userauth.password.PasswordFinder {
+                        override fun reqPassword(resource: net.schmizz.sshj.userauth.password.Resource<*>?) = pw.toCharArray()
+                        override fun shouldRetry(resource: net.schmizz.sshj.userauth.password.Resource<*>?) = false
+                    }
+                    c.auth(host.username,
+                        net.schmizz.sshj.userauth.method.AuthPassword(finder),
+                        net.schmizz.sshj.userauth.method.AuthKeyboardInteractive(net.schmizz.sshj.userauth.method.PasswordResponseProvider(finder)))
+                }
                 SshAuthType.KEY -> {
                     val k = keys.firstOrNull { it.id == host.keyId } ?: throw IOException("No SSH key selected for ${host.name}")
                     val finder = k.passphrase?.takeIf { it.isNotEmpty() }?.let { PasswordUtils.createOneOff(it.toCharArray()) }
@@ -299,6 +310,29 @@ fun sshErrorMessage(e: Throwable, host: String, port: Int): String {
     }
     return e.message ?: e.javaClass.simpleName
 }
+
+/** Unix user names we'll install a key for (also keeps them out of any shell parsing). */
+val UNIX_USER = Regex("[a-z_][a-z0-9_.-]{0,31}")
+
+/**
+ * Command, run on a Proxmox node, that adds [publicKey] to [user]'s authorized_keys inside LXC [vmid]
+ * (via `pct exec`), creating ~/.ssh with the right modes and owner, and not adding it twice. The key
+ * works for that user only. Prints "no-sshd" if the container has no SSH server to log in to.
+ * User and key go in as positional arguments, never spliced into the script.
+ */
+fun lxcInstallKeyCommand(vmid: Int, user: String, publicKey: String, sudo: Boolean): String {
+    require(UNIX_USER.matches(user)) { "Not a valid user name: $user" }
+    return (if (sudo) "sudo -n " else "") + "pct exec $vmid -- sh -c ${shq(installKeyScript())} sh ${shq(user)} ${shq(publicKey.trim())}"
+}
+
+/** The script [lxcInstallKeyCommand] runs inside the container; `sh -c <script> sh <user> <key>`. */
+internal fun installKeyScript(passwd: String = "/etc/passwd") = "u=\"\$1\"; k=\"\$2\"; " +
+    "h=\$(awk -F: -v u=\"\$u\" '\$1==u {print \$6}' $passwd); " +
+    "[ -n \"\$h\" ] || { echo \"No user \$u in this container\" >&2; exit 3; }; " +
+    "mkdir -p \"\$h/.ssh\" && chmod 700 \"\$h/.ssh\" && touch \"\$h/.ssh/authorized_keys\" && chmod 600 \"\$h/.ssh/authorized_keys\" && " +
+    "{ grep -qxF \"\$k\" \"\$h/.ssh/authorized_keys\" || printf '%s\\n' \"\$k\" >> \"\$h/.ssh/authorized_keys\"; } && " +
+    "chown -R \"\$u\": \"\$h/.ssh\" || exit 4; " +
+    "command -v sshd >/dev/null 2>&1 || [ -x /usr/sbin/sshd ] || echo no-sshd"
 
 /** Quote a value for a POSIX shell. */
 fun shq(s: String) = "'" + s.replace("'", "'\\''") + "'"

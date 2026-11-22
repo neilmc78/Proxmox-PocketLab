@@ -36,6 +36,8 @@ data class HostState(
     val dockerError: String? = null,
     val hostKey: HostKeyException? = null,
     val loaded: Boolean = false,
+    /** The host asks for its password each time, so it isn't polled (no stats, no Docker). */
+    val promptOnly: Boolean = false,
 )
 
 data class LabSnapshot(
@@ -126,6 +128,8 @@ class Lab(val store: SecureStore) {
     }
 
     private suspend fun loadHost(h: SshHost, keys: List<SshKey>): HostState {
+        // A host that asks for its password each time can't be polled: it connects only when you open a shell.
+        if (h.authType == SshAuthType.PROMPT && h.password == null) return HostState(loaded = true, promptOnly = true)
         // Reachability is decided by connecting, not by whether the stats script parses.
         try {
             SshPool.client(h, keys)

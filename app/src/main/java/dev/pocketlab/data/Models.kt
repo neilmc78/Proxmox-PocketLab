@@ -16,8 +16,9 @@ data class ProxmoxCluster(
     val pinnedCertSha256: String? = null,
 )
 
+/** KEY: a stored key. PASSWORD: a stored password. PROMPT: password typed each time, never stored (no background polling). */
 @Serializable
-enum class SshAuthType { PASSWORD, KEY }
+enum class SshAuthType { PASSWORD, KEY, PROMPT }
 
 @Serializable
 data class SshHost(

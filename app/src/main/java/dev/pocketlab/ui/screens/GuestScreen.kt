@@ -1,6 +1,9 @@
 package dev.pocketlab.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -148,6 +151,7 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
     var powerSheet by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<PowerAction?>(null) }
     var connectSheet by remember { mutableStateOf(false) }
+    var installKey by remember { mutableStateOf(false) }
     var snapSheet by remember { mutableStateOf(false) }
     var rollbackTo by remember { mutableStateOf<Snapshot?>(null) }
 
@@ -237,15 +241,8 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
             }
         }
         if (g != null) ExtendedFloatingActionButton(
-            onClick = {
-                // An LXC is entered from its node (pct enter): with the node's SSH host set up and no SSH
-                // host of its own, there's nothing to choose, so open the shell straight away.
-                val node = hostForNode(g.clusterId, g.node)
-                if (g.type == GuestType.LXC && node != null && hostForGuest(g.name) == null)
-                    openTerminal(nav, t, "${g.name} shell", node, sudoIfNeeded(node, "pct enter ${g.vmid}"))
-                else connectSheet = true
-            }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
-            icon = { Icon(Icons.Outlined.Terminal, null) }, text = { Text(if (g.type == GuestType.LXC) "Shell" else "Connect") },
+            onClick = { connectSheet = true }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
+            icon = { Icon(Icons.Outlined.Terminal, null) }, text = { Text("Connect") },
             containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
         )
     }
@@ -306,27 +303,110 @@ fun GuestScreen(clusterId: String, node: String, type: String, vmid: Int) {
         val guestHost = hostForGuest(g.name)
         val nodeHost = hostForNode(g.clusterId, g.node)
         val consoleCmd = if (g.type == GuestType.QEMU) "qm terminal ${g.vmid}" else "pct enter ${g.vmid}"
+        // A static address from the guest's config (net0: …,ip=192.168.1.20/24) to prefill a new SSH host.
+        val staticIp = staticIpOf(config)
         LabCard {
-            // An LXC doesn't need SSH of its own (the node's shell and Docker cover it), so only offer
-            // "SSH into the LXC" when one is already set up. A VM is a separate machine: offer to add one.
-            if (g.type == GuestType.QEMU || guestHost != null) {
-                NavRow("SSH into the ${g.type.label}", guestHost?.let { "${it.username}@${it.address}" } ?: "No SSH host named ${g.name}. Tap to add one.",
-                    onClick = {
-                        connectSheet = false
-                        if (guestHost != null) openTerminal(nav, t, g.name, guestHost) else nav.navigate(Routes.editHost())
-                    }, trailing = { if (guestHost != null) Icon(Icons.Outlined.Check, null, tint = MaterialTheme.colorScheme.primary) })
-                Divider()
-            }
-            NavRow(if (g.type == GuestType.QEMU) "Serial console over SSH" else "Container shell over SSH",
-                if (nodeHost != null) "$consoleCmd on ${nodeHost.name}" + (if (g.type == GuestType.QEMU) " · needs serial0 in the VM; exit with Ctrl+O" else "")
-                else "Needs an SSH host for node ${g.node} first. Tap to add it.",
+            // An LXC: the node's shell first (root, nothing to set up), then a real SSH login when
+            // pct enter isn't enough. A VM: its own SSH host first, the serial console second.
+            if (g.type == GuestType.LXC) ConsoleRow(g, nodeHost, consoleCmd) { connectSheet = false }
+            if (g.type == GuestType.LXC) Divider()
+            NavRow("SSH into the ${g.type.label}",
+                guestHost?.let { "${it.username}@${it.address}" }
+                    ?: (if (g.type == GuestType.LXC) "Log in directly (a real login session). Tap to add it as an SSH host."
+                        else "No SSH host named ${g.name}. Tap to add one."),
                 onClick = {
                     connectSheet = false
-                    if (nodeHost != null) openTerminal(nav, t, "${g.name} console", nodeHost, sudoIfNeeded(nodeHost, consoleCmd))
-                    else nav.navigate(Routes.editHost())
-                })
+                    if (guestHost != null) openTerminal(nav, t, g.name, guestHost)
+                    else nav.navigate(Routes.editHost(name = g.name, address = staticIp))
+                }, trailing = { if (guestHost != null) Icon(Icons.Outlined.Check, null, tint = MaterialTheme.colorScheme.primary) })
+            if (g.type == GuestType.QEMU) { Divider(); ConsoleRow(g, nodeHost, consoleCmd) { connectSheet = false } }
+            if (g.type == GuestType.LXC && nodeHost != null) {
+                Divider()
+                NavRow("Install this phone's key", "Lets this phone log in to ${g.name} as a user you choose",
+                    onClick = { connectSheet = false; installKey = true })
+            }
         }
     }
+
+    if (installKey) InstallKeyDialog(g, hostForNode(g.clusterId, g.node), staticIpOf(config)) { installKey = false }
+}
+
+private fun staticIpOf(config: Map<String, String>?) =
+    config?.values?.firstNotNullOfOrNull { Regex("""(?:^|,)ip=(\d+\.\d+\.\d+\.\d+)""").find(it)?.groupValues?.get(1) }.orEmpty()
+
+@Composable
+private fun ConsoleRow(g: PveGuest, nodeHost: dev.pocketlab.data.SshHost?, consoleCmd: String, close: () -> Unit) {
+    val nav = LocalNav.current
+    val t = LocalTones.current
+    NavRow(if (g.type == GuestType.QEMU) "Serial console over SSH" else "Container shell (via ${nodeHost?.name ?: g.node})",
+        if (nodeHost != null) "$consoleCmd on ${nodeHost.name}" + (if (g.type == GuestType.QEMU) " · needs serial0 in the VM; exit with Ctrl+O" else " · root, nothing to set up")
+        else "Needs an SSH host for node ${g.node} first. Tap to add it.",
+        onClick = {
+            close()
+            if (nodeHost != null) openTerminal(nav, t, "${g.name} console", nodeHost, sudoIfNeeded(nodeHost, consoleCmd))
+            else nav.navigate(Routes.editHost())
+        })
+}
+
+/**
+ * Adds one of this phone's public keys to a user's authorized_keys inside an LXC, through the node's
+ * SSH host (pct exec). Says plainly that the key then works for that user only.
+ */
+@Composable
+private fun InstallKeyDialog(g: PveGuest, nodeHost: dev.pocketlab.data.SshHost?, staticIp: String, onDismiss: () -> Unit) {
+    val nav = LocalNav.current
+    val scope = rememberCoroutineScope()
+    val keys = labConfig().keys.filter { it.publicKey != null }
+    var keyId by remember { mutableStateOf(keys.lastOrNull()?.id) }
+    var user by remember { mutableStateOf("root") }
+    var busy by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+    var done by remember { mutableStateOf(false) }
+    val validUser = dev.pocketlab.ssh.UNIX_USER.matches(user)
+    AlertDialog(onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text(if (done) "Key installed" else "Install this phone's key in ${g.name}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!done) {
+                    if (keys.isEmpty()) Text("No key on this phone yet: generate one in Settings → SSH keys first.")
+                    else {
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            keys.forEach { k -> androidx.compose.material3.FilterChip(keyId == k.id, { keyId = k.id }, label = { Text(k.name) }) }
+                        }
+                        OutlinedTextField(user, { user = it.trim().lowercase() }, Modifier.fillMaxWidth(), label = { Text("Log in as user") },
+                            singleLine = true, isError = user.isNotEmpty() && !validUser)
+                        Text("This key will log in to ${g.name} as ${user.ifBlank { "…" }} only. Each user has their own list of allowed " +
+                            "keys: to log in as another user (root included), install it for that user too.",
+                            style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                        Text("Done through ${nodeHost?.name ?: g.node}'s SSH. The private key never leaves this phone.",
+                            style = MaterialTheme.typography.bodySmall, color = LocalTones.current.textDim)
+                    }
+                }
+                result?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+            }
+        },
+        confirmButton = {
+            if (done) TextButton(onClick = {
+                onDismiss(); nav.navigate(Routes.editHost(name = g.name, address = staticIp, user = user, keyId = keyId.orEmpty()))
+            }) { Text("Add SSH host") }
+            else TextButton(enabled = !busy && nodeHost != null && keyId != null && validUser, onClick = {
+                val key = keys.first { it.id == keyId }
+                busy = true; result = null
+                scope.launch {
+                    result = try {
+                        val r = dev.pocketlab.ssh.SshPool.exec(nodeHost!!, lab.config.keys,
+                            dev.pocketlab.ssh.lxcInstallKeyCommand(g.vmid, user, key.publicKey!!, sudo = nodeHost.username != "root"), 30)
+                        if (r.ok) {
+                            done = true
+                            "Installed for $user in ${g.name}. Add ${g.name} as an SSH host with user $user and key ${key.name} to log in directly." +
+                                (if (r.stdout.contains("no-sshd")) "\n\nNote: no SSH server was found in ${g.name}. Install openssh-server there to log in directly." else "")
+                        } else r.stderr.ifBlank { "Failed (exit ${r.exit})" }.trim()
+                    } catch (e: Exception) { e.message ?: e.javaClass.simpleName }
+                    busy = false
+                }
+            }) { Text(if (busy) "Installing…" else "Install") }
+        },
+        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text(if (done) "Close" else "Cancel") } })
 }
 
 @Composable

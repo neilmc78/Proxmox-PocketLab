@@ -93,7 +93,8 @@ object Routes {
     fun container(hostId: String, id: String) = "container/${enc(hostId)}/${enc(id)}"
     fun logs(hostId: String, id: String) = "logs/${enc(hostId)}/${enc(id)}"
     fun term(id: String) = "term/${enc(id)}"
-    fun editHost(id: String? = null) = "edit-host?id=${id?.let(::enc) ?: ""}"
+    fun editHost(id: String? = null, name: String = "", address: String = "", user: String = "", keyId: String = "") =
+        "edit-host?id=${id?.let(::enc) ?: ""}&name=${enc(name)}&addr=${enc(address)}&user=${enc(user)}&key=${enc(keyId)}"
     fun editCluster(id: String? = null) = "edit-cluster?id=${id?.let(::enc) ?: ""}"
     fun workloads(filter: String = "All") = "workloads?filter=$filter"
 }
@@ -161,13 +162,18 @@ fun PocketlabRoot(startRoute: String = "overview", poll: Boolean = true, openRou
                     composable("container/{h}/{id}") { ContainerScreen(it.arguments!!.getString("h")!!, it.arguments!!.getString("id")!!) }
                     composable("logs/{h}/{id}") { LogsScreen(it.arguments!!.getString("h")!!, it.arguments!!.getString("id")!!) }
                     composable("term/{id}") { TermScreen(it.arguments!!.getString("id")!!) }
-                    composable("edit-host?id={id}") { EditHostScreen(it.arguments?.getString("id")?.ifBlank { null }) }
+                    composable("edit-host?id={id}&name={name}&addr={addr}&user={user}&key={key}") {
+                        val a = it.arguments
+                        EditHostScreen(a?.getString("id")?.ifBlank { null }, dev.pocketlab.ui.screens.HostPrefill(
+                            a?.getString("name").orEmpty(), a?.getString("addr").orEmpty(), a?.getString("user").orEmpty(), a?.getString("key").orEmpty()))
+                    }
                     composable("edit-cluster?id={id}") { EditClusterScreen(it.arguments?.getString("id")?.ifBlank { null }) }
                 }
                 if (showBar) BottomBar(nav, currentTab)
             }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 100.dp))
         }
+        dev.pocketlab.ui.screens.PasswordPromptDialog()
     }
 }
 

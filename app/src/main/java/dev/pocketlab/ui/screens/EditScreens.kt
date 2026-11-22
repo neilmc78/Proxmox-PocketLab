@@ -270,20 +270,24 @@ fun EditClusterScreen(id: String?) {
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } })
 }
 
+/** Values to start a new SSH host with, e.g. from an LXC's "SSH into the LXC". */
+data class HostPrefill(val name: String = "", val address: String = "", val user: String = "", val keyId: String = "")
+
 @Composable
-fun EditHostScreen(id: String?) {
+fun EditHostScreen(id: String?, prefill: HostPrefill = HostPrefill()) {
     val nav = LocalNav.current
     val snackbar = LocalSnackbar.current
     val scope = rememberCoroutineScope()
     val cfg = labConfig()
     val existing = cfg.hosts.firstOrNull { it.id == id }
-    var name by remember { mutableStateOf(existing?.name ?: "") }
-    var address by remember { mutableStateOf(existing?.address ?: "") }
+    var name by remember { mutableStateOf(existing?.name ?: prefill.name) }
+    var address by remember { mutableStateOf(existing?.address ?: prefill.address) }
     var port by remember { mutableStateOf((existing?.port ?: 22).toString()) }
-    var user by remember { mutableStateOf(existing?.username ?: "root") }
+    var user by remember { mutableStateOf(existing?.username ?: prefill.user.ifBlank { "root" }) }
     var auth by remember { mutableStateOf(existing?.authType ?: if (cfg.keys.isEmpty()) SshAuthType.PASSWORD else SshAuthType.KEY) }
+    // For "ask each time" this holds the one-off password for Test and save; it's never stored.
     var password by remember { mutableStateOf(existing?.password ?: "") }
-    var keyId by remember { mutableStateOf(existing?.keyId ?: cfg.keys.firstOrNull()?.id) }
+    var keyId by remember { mutableStateOf(existing?.keyId ?: prefill.keyId.ifBlank { null } ?: cfg.keys.firstOrNull()?.id) }
     var dockerChoice by remember { mutableStateOf(existing?.dockerEnabled) }
     var dockerSudo by remember { mutableStateOf(existing?.dockerSudo ?: false) }
     var node by remember { mutableStateOf(existing?.proxmoxNode ?: "") }
@@ -321,7 +325,8 @@ fun EditHostScreen(id: String?) {
         if (nodeTouched) node.takeIf { it.isNotBlank() }?.let { nodeCluster to it } else autoNode()
 
     // Until the user flips it: off for a Proxmox node (Docker rarely runs on the hypervisor), on otherwise.
-    fun docker() = dockerChoice ?: (linkedNode() == null)
+    // "Ask each time" hosts aren't polled, so they can't list Docker.
+    fun docker() = auth != SshAuthType.PROMPT && (dockerChoice ?: (linkedNode() == null))
 
     fun build() = SshHost(
         id = existing?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim().ifBlank { hostAddr() },
@@ -335,7 +340,8 @@ fun EditHostScreen(id: String?) {
         busy = true; error = null
         val h = build()
         try {
-            withContext(Dispatchers.IO) { SshPool.open(h, lab.config.keys).close() }
+            val probe = if (auth == SshAuthType.PROMPT) h.copy(password = password) else h
+            withContext(Dispatchers.IO) { SshPool.open(probe, lab.config.keys).close() }
             lab.store.update { c -> c.copy(hosts = c.hosts.filterNot { it.id == h.id } + h) }
             SshPool.drop(h.id)
             lab.refreshHost(h.id)
@@ -361,9 +367,15 @@ fun EditHostScreen(id: String?) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(auth == SshAuthType.KEY, { auth = SshAuthType.KEY }, label = { Text("SSH key") })
             FilterChip(auth == SshAuthType.PASSWORD, { auth = SshAuthType.PASSWORD }, label = { Text("Password") })
+            FilterChip(auth == SshAuthType.PROMPT, { auth = SshAuthType.PROMPT }, label = { Text("Ask each time") })
         }
         if (auth == SshAuthType.PASSWORD) {
             SecretField(password, { password = it }, "Password")
+            Help("Saved encrypted on this phone, so the host can be polled for status and Docker.")
+        } else if (auth == SshAuthType.PROMPT) {
+            SecretField(password, { password = it }, "Password for this test (not saved)")
+            Help("No key, nothing saved: you're asked for the password each time, before the console opens. " +
+                "The host isn't polled in the background, so no status or Docker for it.")
         } else {
             if (cfg.keys.isEmpty()) Help("No keys yet.")
             cfg.keys.forEach { k ->
@@ -373,7 +385,7 @@ fun EditHostScreen(id: String?) {
             }
             OutlinedButton(onClick = { nav.navigate("keys") }) { Text("Manage keys (generate / import)") }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (auth != SshAuthType.PROMPT) Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text("Docker"); Help("List containers on this host") }
             Switch(docker(), { dockerChoice = it })
         }
@@ -403,7 +415,7 @@ fun EditHostScreen(id: String?) {
         fp?.let { Help("Trusted host key: $it") }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(onClick = { testAndSave() }, enabled = !busy && address.isNotBlank() && user.isNotBlank() &&
-            (auth == SshAuthType.PASSWORD || keyId != null), modifier = Modifier.fillMaxWidth()) {
+            (if (auth == SshAuthType.KEY) keyId != null else password.isNotEmpty()), modifier = Modifier.fillMaxWidth()) {
             if (busy) CircularProgressIndicator(Modifier.height(18.dp), strokeWidth = 2.dp) else Text("Test and save")
         }
         if (existing != null) TextButton(onClick = { confirmDelete = true }, Modifier.fillMaxWidth()) { Text("Remove host", color = MaterialTheme.colorScheme.error) }

@@ -202,10 +202,17 @@ class UiSmokeTest {
         shoot("20-lxc-docker", open = Routes.guest("c1", "pve2", "lxc", 301))
         compose.onNodeWithText("Docker in this container").assertExists()
         compose.onNodeWithText("through pve2's SSH", substring = true).assertExists()
-        // An LXC's button opens its shell through the node; there's no separate SSH host to offer.
-        // The extended FAB's label isn't in the merged tree, so look in the unmerged one.
-        assertTrue(compose.onAllNodesWithText("Shell", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
-        assertTrue(compose.onAllNodesWithText("Connect", useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
+        // Connect offers the node's container shell, a direct SSH login, and installing this phone's key.
+        // (The extended FAB's label isn't in the merged tree, so use the unmerged one.)
+        compose.onAllNodesWithText("Connect", useUnmergedTree = true)[0].performClick()
+        compose.waitForIdle()
+        snap("20b-lxc-connect")
+        compose.onNodeWithText("Container shell (via pve2)").assertExists()
+        compose.onNodeWithText("SSH into the LXC").assertExists()
+        compose.onNodeWithText("Install this phone's key").performClick()
+        compose.waitForIdle()
+        snap("20c-lxc-install-key")
+        compose.onNodeWithText("This key will log in to pihole as root only", substring = true).assertExists()
     }
 
     /** "Close all connections" asks first instead of acting on tap. */

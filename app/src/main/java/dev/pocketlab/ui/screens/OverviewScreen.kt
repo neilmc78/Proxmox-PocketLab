@@ -160,8 +160,8 @@ fun OverviewScreen() {
                     cfg.hosts.forEachIndexed { i, h ->
                         if (i > 0) Divider()
                         val st = snap.hosts[h.id]
-                        val health = when { st == null || !st.loaded -> Health.OFF; st.error != null -> Health.BAD; else -> Health.OK }
-                        HostRow(h.name, health, when { st == null || !st.loaded -> "Connecting…"; st.error != null -> "Unreachable"; else -> "Connected" },
+                        val health = when { st == null || !st.loaded || st.promptOnly -> Health.OFF; st.error != null -> Health.BAD; else -> Health.OK }
+                        HostRow(h.name, health, when { st == null || !st.loaded -> "Connecting…"; st.promptOnly -> "Password on connect"; st.error != null -> "Unreachable"; else -> "Connected" },
                             st?.stats?.cpu?.toFloat(), st?.stats?.memFraction?.toFloat()) { nav.navigate(Routes.host(h.id)) }
                     }
                 }
