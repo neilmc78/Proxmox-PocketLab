@@ -52,7 +52,8 @@ android {
         create("dev") {
             initWith(getByName("release"))
             applicationIdSuffix = ".dev"
-            versionNameSuffix = "-dev"
+            // CI passes "-dev.<run>", so a PR's build reads e.g. 0.3.4-dev.17: the release it will become.
+            versionNameSuffix = (findProperty("appVersionSuffix") as String?) ?: "-dev"
             matchingFallbacks += listOf("release")
         }
     }

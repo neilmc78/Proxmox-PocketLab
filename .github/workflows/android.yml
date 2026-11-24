@@ -2,6 +2,7 @@ name: Android CI
 
 # Every PR and every push to main: unit tests + the "dev" build: the release build (R8) under its
 # own app ID (dev.pocketlab.dev, shown as "Pocketlab Dev"), so it installs next to the real app.
+# Its version is the release the PR will become plus the run number, e.g. 0.3.4-dev.17.
 # Signed with the release key when the signing secrets are available, so each dev build updates the
 # last one. Dependabot PRs get no secrets: their APKs are signed with a throwaway debug key and must
 # replace an installed dev build by uninstalling it first. Real releases come from release.yml.
@@ -28,6 +29,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0   # release tags, to work out the next version
+
+      # Read-only: the version this PR becomes when merged ([minor]/[major] in its title count).
+      - name: Work out the dev version
+        id: next
+        uses: neilmc78/release-on-merge@v1
+        with:
+          dry-run: true
+          title: ${{ github.event.pull_request.title }}
 
       - name: Set up JDK 21
         uses: actions/setup-java@v6
@@ -62,7 +72,10 @@ jobs:
             "$ks" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
 
       - name: Dev build (R8, installs as "Pocketlab Dev")
-        run: ./gradlew --no-daemon assembleDev -PappVersionName=ci.${{ github.run_number }}
+        run: >
+          ./gradlew --no-daemon assembleDev
+          -PappVersionName=${{ steps.next.outputs.version }}
+          -PappVersionSuffix=-dev.${{ github.run_number }}
 
       - name: Remove signing material
         if: always()
@@ -94,8 +107,9 @@ jobs:
           retention-days: 14
 
   # Puts the PR's UI screenshots on the `screenshots` branch (pr-<N>/) and shows them in a PR comment,
-  # so they can be viewed inline. This is the only job that can write, and it never checks out or runs
-  # the PR's code: it only copies the PNGs the build job uploaded. Skipped for Dependabot and forks.
+  # so they can be viewed inline (neilmc78/release-on-merge/pr-screenshots). This is the only job that
+  # can write, and it never checks out or runs the PR's code: it only copies the PNGs the build job
+  # uploaded. Skipped for Dependabot and forks.
   screenshots:
     needs: build
     if: >
@@ -116,44 +130,6 @@ jobs:
           path: shots
 
       - name: Publish to the screenshots branch and comment on the PR
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-          RUN: ${{ github.run_number }}
-          SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          ls shots/*.png >/dev/null 2>&1 || { echo "No screenshots"; exit 0; }
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          url="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
-          if git ls-remote --exit-code --heads "$url" screenshots >/dev/null; then
-            git clone -q --depth 1 --branch screenshots "$url" pub
-          else
-            git init -q -b screenshots pub
-          fi
-          rm -rf "pub/pr-$PR" && mkdir -p "pub/pr-$PR" && cp shots/*.png "pub/pr-$PR/"
-          cd pub
-          git add -A
-          # One commit, force-pushed: keeps the branch from growing with every run.
-          git checkout -q --orphan fresh && git commit -qm "Screenshots (latest per PR)" && git branch -M fresh screenshots
-          git push -q -f "$url" screenshots
-          commit=$(git rev-parse HEAD)
-          cd ..
-          {
-            echo "<!-- pocketlab-screenshots -->"
-            echo "### UI screenshots · run $RUN · ${SHA:0:7}"
-            echo
-            for f in $(ls shots/*.png | sort -V); do
-              n=$(basename "$f")
-              echo "<img src=\"https://github.com/${REPO}/blob/${commit}/pr-${PR}/${n}?raw=true\" width=\"240\" alt=\"${n%.png}\" title=\"${n%.png}\">"
-            done
-          } > body.md
-          id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-            --jq '.[] | select(.user.login=="github-actions[bot]" and (.body|startswith("<!-- pocketlab-screenshots -->"))) | .id' | head -1)
-          if [ -n "$id" ]; then
-            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@body.md >/dev/null
-          else
-            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@body.md >/dev/null
-          fi
+        uses: neilmc78/release-on-merge/pr-screenshots@v1
+        with:
+          path: shots
